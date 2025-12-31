@@ -1,4 +1,5 @@
-﻿const express = require('express');
+﻿// backend/src/routes/channels.js
+const express = require('express');
 const router = express.Router();
 const storage = require('../storage/inMemory');
 
@@ -25,7 +26,7 @@ router.get('/:id', (req, res) => {
 
 // POST /api/channels - Create new channel
 router.post('/', (req, res) => {
-  const { serverId, name } = req.body;
+  const { serverId, name, type } = req.body; // type eklendi
   
   if (!serverId || !name || !name.trim()) {
     return res.status(400).json({ error: 'serverId and name required' });
@@ -36,7 +37,8 @@ router.post('/', (req, res) => {
     return res.status(404).json({ error: 'Server not found' });
   }
 
-  const channel = storage.createChannel(serverId, name.trim());
+  // Kanalı oluştur (type gönderilmezse 'text' olur)
+  const channel = storage.createChannel(serverId, name.trim(), type || 'text');
   res.status(201).json(channel);
 });
 
