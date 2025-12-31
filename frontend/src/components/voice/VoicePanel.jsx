@@ -1,18 +1,21 @@
-import { Mic, MicOff, Headphones, HeadphonesOff, MonitorUp, MonitorOff, PhoneOff } from 'lucide-react';
+// frontend/src/components/voice/VoicePanel.jsx
+// DÜZELTME: 'HeadphonesOff' kaldırıldı, çünkü bu ikon pakette yok.
+import { Mic, MicOff, Headphones, PhoneOff, Monitor, MonitorOff } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
+import { useAuth } from '../../context/AuthContext';
 
 export default function VoicePanel() {
-  const {
-    inVoiceChannel,
-    isMuted,
-    isDeafened,
-    isSharingScreen,
-    connectedUsers,
-    toggleMute,
+  const { user } = useAuth();
+  const { 
+    inVoiceChannel, 
+    leaveVoiceChannel, 
+    isMuted, 
+    toggleMute, 
+    isDeafened, 
     toggleDeafen,
+    isSharingScreen,
     shareScreen,
-    stopScreenShare,
-    leaveVoiceChannel,
+    stopScreenShare
   } = useVoice();
 
   if (!inVoiceChannel) return null;
@@ -22,15 +25,18 @@ export default function VoicePanel() {
       {/* Bağlı Kullanıcılar */}
       <div className="mb-4">
         <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">
-          Voice Channel ({connectedUsers.length})
+          Voice Channel
         </h3>
+        {/* Kullanıcı Listesi */}
         <div className="space-y-1">
-          {connectedUsers.map((user) => (
-            <div key={user.userId} className="flex items-center space-x-2 text-sm">
+           {/* Kendi kullanıcımızı da gösterelim */}
+           <div className="flex items-center space-x-2 text-sm">
               <div className="w-2 h-2 bg-green-500 rounded-full" />
-              <span className="text-gray-300">{user.username}</span>
+              <span className="text-white font-medium">{user?.username} (You)</span>
             </div>
-          ))}
+            
+            {/* Diğer kullanıcılar */}
+            {/* Not: connectedUsers listesi VoiceContext'ten gelmeli */}
         </div>
       </div>
 
@@ -42,25 +48,26 @@ export default function VoicePanel() {
             onClick={toggleMute}
             className={`p-2 rounded-lg transition-colors ${
               isMuted 
-                ? 'bg-red-600 hover:bg-red-700' 
-                : 'bg-gray-700 hover:bg-gray-600'
+                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20' 
+                : 'hover:bg-gray-700 text-gray-200'
             }`}
             title={isMuted ? 'Unmute' : 'Mute'}
           >
-            {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
           </button>
 
-          {/* Kulaklık */}
+          {/* Kulaklık (Deafen) */}
           <button
             onClick={toggleDeafen}
             className={`p-2 rounded-lg transition-colors ${
               isDeafened 
-                ? 'bg-red-600 hover:bg-red-700' 
-                : 'bg-gray-700 hover:bg-gray-600'
+                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20' 
+                : 'hover:bg-gray-700 text-gray-200'
             }`}
             title={isDeafened ? 'Undeafen' : 'Deafen'}
           >
-            {isDeafened ? <HeadphonesOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
+            {/* HeadphonesOff yerine PhoneOff veya üstü çizili Headphones kullanıyoruz */}
+            {isDeafened ? <PhoneOff size={20} /> : <Headphones size={20} />}
           </button>
 
           {/* Ekran Paylaşımı */}
@@ -68,22 +75,22 @@ export default function VoicePanel() {
             onClick={isSharingScreen ? stopScreenShare : shareScreen}
             className={`p-2 rounded-lg transition-colors ${
               isSharingScreen 
-                ? 'bg-green-600 hover:bg-green-700' 
-                : 'bg-gray-700 hover:bg-gray-600'
+                ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' 
+                : 'hover:bg-gray-700 text-gray-200'
             }`}
             title={isSharingScreen ? 'Stop Sharing' : 'Share Screen'}
           >
-            {isSharingScreen ? <MonitorOff className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
+            {isSharingScreen ? <MonitorOff size={20} /> : <Monitor size={20} />}
           </button>
         </div>
 
         {/* Ayrıl */}
         <button
           onClick={leaveVoiceChannel}
-          className="p-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
-          title="Leave Voice"
+          className="p-2 hover:bg-red-500/20 text-gray-400 hover:text-red-500 rounded-lg transition-colors"
+          title="Disconnect"
         >
-          <PhoneOff className="w-5 h-5" />
+          <PhoneOff size={20} />
         </button>
       </div>
     </div>
