@@ -9,7 +9,6 @@ class InMemoryStorage {
 
     // Initialize with default data
     this.seedData();
-    
   }
 
   seedData() {
@@ -100,7 +99,7 @@ class InMemoryStorage {
     return false;
   }
 
-  // Users (for future authentication)
+  // Users
   createUser(username) {
     const user = {
       id: uuidv4(),
@@ -117,6 +116,28 @@ class InMemoryStorage {
 
   getAllUsers() {
     return [...this.users];
+  }
+
+  // --- Yeni Eklenen Auth Metodları ---
+
+  getUserByEmail(email) {
+    return this.users.find(u => u.email === email);
+  }
+
+  getUserById(id) {
+    return this.users.find(u => u.id === id);
+  }
+
+  createUserWithAuth({ username, email, password }) {
+    const user = {
+      id: uuidv4(),
+      username,
+      email,
+      password, // hashed password olarak gelmeli
+      createdAt: Date.now(),
+    };
+    this.users.push(user);
+    return user;
   }
 }
 

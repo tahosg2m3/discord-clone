@@ -1,4 +1,5 @@
-﻿import { formatTime } from '../../utils/formatTime';
+﻿// frontend/src/components/chat/Message.jsx
+import { formatTime } from '../../utils/formatTime';
 import { getColorForString } from '../../utils/colors';
 
 export default function Message({ message, isOwn, grouped }) {
@@ -14,6 +15,10 @@ export default function Message({ message, isOwn, grouped }) {
   const avatarColor = getColorForString(message.username);
   const initial = message.username[0].toUpperCase();
 
+  // GIF kontrolü: [GIF:url] formatını algıla
+  const isGif = message.content.startsWith('[GIF:') && message.content.endsWith(']');
+  const gifUrl = isGif ? message.content.slice(5, -1) : null;
+
   return (
     <div
       className={`
@@ -26,7 +31,7 @@ export default function Message({ message, isOwn, grouped }) {
         <div className={`${grouped ? 'invisible' : ''} flex-shrink-0`}>
           <div
             className="w-10 h-10 rounded-full flex items-center justify-center 
-                       text-white font-semibold"
+                        text-white font-semibold"
             style={{ backgroundColor: avatarColor }}
           >
             {initial}
@@ -50,16 +55,27 @@ export default function Message({ message, isOwn, grouped }) {
             </div>
           )}
 
-          {/* Message Text */}
-          <div className="text-gray-100 break-words leading-relaxed">
-            {message.content}
-          </div>
+          {/* GIF veya Text Render */}
+          {isGif ? (
+            <div className="mt-1">
+              <img
+                src={gifUrl}
+                alt="GIF"
+                className="max-w-md rounded-lg shadow-sm"
+                loading="lazy"
+              />
+            </div>
+          ) : (
+            <div className="text-gray-100 break-words leading-relaxed">
+              {message.content}
+            </div>
+          )}
         </div>
 
         {/* Hover Timestamp (only for grouped messages) */}
         {grouped && (
           <div className="opacity-0 group-hover:opacity-100 text-xs text-gray-500 
-                         absolute right-4 top-1 transition-opacity">
+                          absolute right-4 top-1 transition-opacity">
             {formatTime(message.timestamp)}
           </div>
         )}

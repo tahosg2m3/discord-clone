@@ -1,0 +1,48 @@
+{
+  "name": "discord-clone",
+  "version": "1.0.0",
+  "description": "Discord-like chat application",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "electron-builder",
+    "build": "npm run build:frontend && npm run build:electron",
+    "postinstall": "cd backend && npm install && cd ../frontend && npm install"
+  },
+  "build": {
+    "appId": "com.chatapp.discord-clone",
+    "productName": "Discord Clone",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "electron/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "electron/icon.icns",
+      "category": "public.app-category.social-networking"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "electron/icon.png",
+      "category": "Network"
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0",
+    "cross-env": "^7.0.3"
+  }
+}

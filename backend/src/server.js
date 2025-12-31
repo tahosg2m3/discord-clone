@@ -8,9 +8,12 @@ const dotenv = require('dotenv');
 const serverRoutes = require('./routes/servers');
 const channelRoutes = require('./routes/channels');
 const userRoutes = require('./routes/users');
+const authRoutes = require('./routes/auth');
 const setupSocketHandlers = require('./sockets');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./middleware/logger');
+// PeerJS sunucu başlatıcıyı import et
+const { startPeerServer } = require('./peerServer'); 
 
 dotenv.config();
 
@@ -32,9 +35,11 @@ app.use(cors({
 app.use(express.json());
 app.use(logger);
 
+// Routes
 app.use('/api/servers', serverRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/auth', authRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -49,6 +54,9 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 WebSocket server ready`);
   console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+
+  // PeerJS server'ı başlat
+  startPeerServer();
 });
 
 process.on('SIGTERM', () => {

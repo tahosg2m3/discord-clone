@@ -1,14 +1,22 @@
-﻿const messageHandler = require('./handlers/messageHandler');
+﻿// backend/src/sockets/index.js
+const messageHandler = require('./handlers/messageHandler');
 const userHandler = require('./handlers/userHandler');
 const typingHandler = require('./handlers/typingHandler');
-const messageHandler = require('./handlers/messageHandler');
-const voiceHandler = require('./handlers/voiceHandler');
+const voiceHandler = require('./handlers/voiceHandler'); // Yeni eklenen ses modülü
 const { userService } = require('../services/userService');
 
 module.exports = (io) => {
   io.on('connection', (socket) => {
     console.log(`✅ Client connected: ${socket.id}`);
 
+    // --- 1. Ses (Voice) Handler ---
+    // Ses modülü kendi içinde socket.on dinleyicilerini kurduğu için
+    // bunu doğrudan çağırıyoruz.
+    voiceHandler(io, socket);
+
+
+    // --- 2. Mevcut Logic (User Data & Events) ---
+    
     // Store user info on socket
     socket.userData = {
       username: null,
@@ -52,11 +60,5 @@ module.exports = (io) => {
         io.to(roomName).emit('members:update', { members });
       }
     });
-  });
-};
-module.exports = (io) => {
-  io.on('connection', (socket) => {
-    messageHandler(io, socket);
-    voiceHandler(io, socket);
   });
 };
