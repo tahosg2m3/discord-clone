@@ -1,4 +1,5 @@
-﻿const API_URL = 'http://localhost:3001/api';
+﻿// frontend/src/services/api.js
+const API_URL = 'http://localhost:3001/api';
 
 // Generic fetch wrapper
 async function request(endpoint, options = {}) {
@@ -38,10 +39,11 @@ export const fetchChannels = (serverId) =>
 
 export const fetchChannelById = (id) => request(`/channels/${id}`);
 
-export const createChannel = (serverId, name) =>
+// GÜNCELLEME: createChannel artık 'type' alıyor (varsayılan 'text')
+export const createChannel = (serverId, name, type = 'text') =>
   request('/channels', {
     method: 'POST',
-    body: JSON.stringify({ serverId, name }),
+    body: JSON.stringify({ serverId, name, type }),
   });
 
 export const deleteChannel = (id) =>

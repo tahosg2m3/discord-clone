@@ -20,11 +20,11 @@ class InMemoryStorage {
     };
     this.servers.push(defaultServer);
 
-    // Create default channels
+    // Create default channels (Type özelliği eklendi)
     const defaultChannels = [
-      { name: 'general', serverId: defaultServer.id },
-      { name: 'random', serverId: defaultServer.id },
-      { name: 'announcements', serverId: defaultServer.id },
+      { name: 'general', type: 'text', serverId: defaultServer.id },
+      { name: 'random', type: 'text', serverId: defaultServer.id },
+      { name: 'Lounge', type: 'voice', serverId: defaultServer.id }, // Varsayılan ses kanalı
     ];
 
     defaultChannels.forEach(channelData => {
@@ -53,8 +53,8 @@ class InMemoryStorage {
     };
     this.servers.push(server);
 
-    // Create default general channel
-    this.createChannel(server.id, 'general');
+    // Yeni sunucu açılınca varsayılan text kanalı oluştur
+    this.createChannel(server.id, 'general', 'text');
 
     return server;
   }
@@ -79,11 +79,13 @@ class InMemoryStorage {
     return this.channels.find(c => c.id === id);
   }
 
-  createChannel(serverId, name) {
+  // type parametresi eklendi (varsayılan: 'text')
+  createChannel(serverId, name, type = 'text') {
     const channel = {
       id: uuidv4(),
       serverId,
       name,
+      type, // Kanal türü ('text' veya 'voice')
       createdAt: Date.now(),
     };
     this.channels.push(channel);
@@ -118,8 +120,7 @@ class InMemoryStorage {
     return [...this.users];
   }
 
-  // --- Yeni Eklenen Auth Metodları ---
-
+  // Auth Metodları
   getUserByEmail(email) {
     return this.users.find(u => u.email === email);
   }
@@ -133,7 +134,7 @@ class InMemoryStorage {
       id: uuidv4(),
       username,
       email,
-      password, // hashed password olarak gelmeli
+      password, // hashed password
       createdAt: Date.now(),
     };
     this.users.push(user);

@@ -9,6 +9,7 @@ import ChannelList from './components/layout/ChannelList';
 import ChatArea from './components/layout/ChatArea';
 import MemberList from './components/layout/MemberList';
 import VoicePanel from './components/voice/VoicePanel';
+import VideoGrid from './components/voice/VideoGrid'; // EKLENDİ
 
 function AppContent() {
   const { user } = useAuth();
@@ -20,18 +21,16 @@ function AppContent() {
 
   return (
     <div className="h-screen flex bg-gray-900 text-gray-100">
-      {/* Left Sidebar - Server Icons */}
       <ServerList />
-
-      {/* Second Sidebar - Channels */}
       {currentServer && <ChannelList />}
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {currentChannel ? (
           <>
+            {/* Video Izgarası Sohbetin Üstünde Görünsün */}
+            <VideoGrid /> 
+            
             <ChatArea />
-            {/* Ses paneli Chat alanının altında görünecek */}
             <VoicePanel />
           </>
         ) : (
@@ -41,7 +40,6 @@ function AppContent() {
         )}
       </div>
 
-      {/* Right Sidebar - Members */}
       {currentChannel && <MemberList />}
     </div>
   );
