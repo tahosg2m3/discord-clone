@@ -1,4 +1,9 @@
 ﻿# Discord Clone - Full Stack Chat Application
+<p align="right">
+🌍 Language:
+<a href="README.md">English</a> |
+<a href="README.tr.md">Türkçe</a>
+</p>
 
 ## Features
 
