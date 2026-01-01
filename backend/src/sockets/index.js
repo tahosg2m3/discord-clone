@@ -1,40 +1,66 @@
-﻿// backend/src/sockets/index.js
+﻿// backend/src/sockets/index.js - KOMPLE GÜNCEL VERSİYON
 const messageHandler = require('./handlers/messageHandler');
 const userHandler = require('./handlers/userHandler');
 const typingHandler = require('./handlers/typingHandler');
-const voiceHandler = require('./handlers/voiceHandler'); // Yeni eklenen ses modülü
+const voiceHandler = require('./handlers/voiceHandler');
+const dmHandler = require('./handlers/dmHandler');
+const statusHandler = require('./handlers/statusHandler');
 const { userService } = require('../services/userService');
+const storage = require('../storage/inMemory');
 
 module.exports = (io) => {
   io.on('connection', (socket) => {
     console.log(`✅ Client connected: ${socket.id}`);
 
-    // --- 1. Ses (Voice) Handler ---
-    // Ses modülü kendi içinde socket.on dinleyicilerini kurduğu için
-    // bunu doğrudan çağırıyoruz.
-    voiceHandler(io, socket);
-
-
-    // --- 2. Mevcut Logic (User Data & Events) ---
-    
-    // Store user info on socket
     socket.userData = {
+      userId: null,
       username: null,
       currentChannel: null,
     };
 
-    // User Events
+    // User authentication
+    socket.on('authenticate', (data) => {
+      socket.userData.userId = data.userId;
+      socket.userData.username = data.username;
+      
+      // Join personal room for DMs
+      socket.join(`user:${data.userId}`);
+      
+      // Update status to online
+      storage.updateUserStatus(data.userId, 'online');
+      
+      // Notify friends
+      const friends = storage.getUserFriends(data.userId);
+      friends.forEach(friend => {
+        io.to(`user:${friend.id}`).emit('status:update', {
+          userId: data.userId,
+          username: data.username,
+          status: 'online',
+        });
+      });
+      
+      console.log(`🔐 User authenticated: ${data.username}`);
+    });
+
+    // Channel events
     socket.on('user:join', (data) => userHandler.handleJoin(io, socket, data));
     socket.on('user:leave', (data) => userHandler.handleLeave(io, socket, data));
-
-    // Message Events
     socket.on('message:send', (data) => messageHandler.handleSend(io, socket, data));
-
-    // Typing Events
     socket.on('typing:start', (data) => typingHandler.handleStart(io, socket, data));
     socket.on('typing:stop', (data) => typingHandler.handleStop(io, socket, data));
 
-    // Member List Request
+    // Voice events
+    socket.on('voice:join', (data) => voiceHandler.handleJoinVoice(io, socket, data));
+    socket.on('voice:leave', (data) => voiceHandler.handleLeaveVoice(io, socket, data));
+
+    // DM events
+    socket.on('dm:send', (data) => dmHandler.handleSendDM(io, socket, data));
+
+    // Status events
+    socket.on('status:change', (data) => statusHandler.handleStatusChange(io, socket, data));
+    socket.on('users:get-online', (data) => statusHandler.handleGetOnlineUsers(io, socket, data));
+
+    // Member list request
     socket.on('members:request', (data) => {
       const members = userService.getChannelMembers(data.channelId);
       socket.emit('members:update', { members });
@@ -44,20 +70,33 @@ module.exports = (io) => {
     socket.on('disconnect', () => {
       console.log(`❌ Client disconnected: ${socket.id}`);
       
-      // Clean up user from channel
+      // Clean up voice channel
       if (socket.userData.username && socket.userData.currentChannel) {
         userService.removeUser(socket.userData.currentChannel, socket.id);
         
-        // Notify channel
         const roomName = `channel:${socket.userData.currentChannel}`;
         io.to(roomName).emit('user:left', {
           username: socket.userData.username,
           timestamp: Date.now(),
         });
 
-        // Update member list
         const members = userService.getChannelMembers(socket.userData.currentChannel);
         io.to(roomName).emit('members:update', { members });
+      }
+
+      // Update status to offline
+      if (socket.userData.userId) {
+        storage.updateUserStatus(socket.userData.userId, 'offline');
+        
+        // Notify friends
+        const friends = storage.getUserFriends(socket.userData.userId);
+        friends.forEach(friend => {
+          io.to(`user:${friend.id}`).emit('status:update', {
+            userId: socket.userData.userId,
+            username: socket.userData.username,
+            status: 'offline',
+          });
+        });
       }
     });
   });

@@ -1,4 +1,3 @@
-// frontend/src/context/VoiceContext.jsx
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
@@ -20,35 +19,22 @@ export const VoiceProvider = ({ children }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isSharingScreen, setIsSharingScreen] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(false);
   const [connectedUsers, setConnectedUsers] = useState([]);
+  const [remoteStreams, setRemoteStreams] = useState({});
   
-  // Görüntülü görüşme için state
-  const [remoteStreams, setRemoteStreams] = useState([]); 
-
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
+  const cameraStreamRef = useRef(null);
   const peersRef = useRef({});
-
-  // Boş video track oluşturucu (Ekran paylaşımı hazırlığı için)
-  const createDummyVideoTrack = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, 640, 480);
-    const stream = canvas.captureStream(1); // 1 FPS
-    return stream.getVideoTracks()[0];
-  };
 
   useEffect(() => {
     if (!user) return;
 
     const newPeer = new Peer(user.id, {
-      host: import.meta.env.VITE_PEER_HOST || 'localhost',
-      port: import.meta.env.VITE_PEER_PORT || 9000,
+      host: 'localhost',
+      port: 9000,
       path: '/peerjs',
-      secure: import.meta.env.VITE_PEER_SECURE === 'true',
     });
 
     newPeer.on('open', (id) => {
@@ -59,15 +45,15 @@ export const VoiceProvider = ({ children }) => {
     newPeer.on('call', (call) => {
       console.log('📞 Incoming call from:', call.peer);
       
-      if (localStreamRef.current) {
-        call.answer(localStreamRef.current);
+      if (localStreamRef.current || cameraStreamRef.current) {
+        const streamToSend = cameraStreamRef.current || localStreamRef.current;
+        call.answer(streamToSend);
+        
         call.on('stream', (remoteStream) => {
           addRemoteStream(call.peer, remoteStream);
         });
       }
     });
-
-    newPeer.on('error', (err) => console.error('PeerJS Error:', err));
 
     return () => {
       newPeer.destroy();
@@ -79,16 +65,16 @@ export const VoiceProvider = ({ children }) => {
 
     socket.on('voice:user-joined', ({ userId, username }) => {
       console.log('👤 User joined voice:', username);
-      setConnectedUsers(prev => {
-        if(prev.find(u => u.userId === userId)) return prev;
-        return [...prev, { userId, username }];
-      });
+      setConnectedUsers(prev => [...prev, { userId, username }]);
       
-      if (peer && localStreamRef.current) {
-        const call = peer.call(userId, localStreamRef.current);
+      if (peer && (localStreamRef.current || cameraStreamRef.current)) {
+        const streamToSend = cameraStreamRef.current || localStreamRef.current;
+        const call = peer.call(userId, streamToSend);
+        
         call.on('stream', (remoteStream) => {
           addRemoteStream(userId, remoteStream);
         });
+        
         peersRef.current[userId] = call;
       }
     });
@@ -113,22 +99,22 @@ export const VoiceProvider = ({ children }) => {
 
   const joinVoiceChannel = async (channelId) => {
     try {
-      // Ses akışını al
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: false 
+      });
       
-      // Boş bir video izi ekle (Ekran paylaşımı için yer tutucu)
-      const videoTrack = createDummyVideoTrack();
-      const combinedStream = new MediaStream([audioStream.getAudioTracks()[0], videoTrack]);
-
-      localStreamRef.current = combinedStream;
+      localStreamRef.current = stream;
       setInVoiceChannel(true);
 
       if (socket) {
         socket.emit('voice:join', { channelId, userId: user.id, username: user.username });
       }
+
+      console.log('🎤 Joined voice channel');
     } catch (error) {
       console.error('Failed to join voice:', error);
-      alert('Microphone access denied or not found.');
+      alert('Microphone access denied');
     }
   };
 
@@ -137,9 +123,15 @@ export const VoiceProvider = ({ children }) => {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
+
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(track => track.stop());
       screenStreamRef.current = null;
+    }
+
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
     }
 
     Object.values(peersRef.current).forEach(call => call.close());
@@ -147,12 +139,15 @@ export const VoiceProvider = ({ children }) => {
 
     setInVoiceChannel(false);
     setIsSharingScreen(false);
+    setIsCameraOn(false);
     setConnectedUsers([]);
-    setRemoteStreams([]); // Streamleri temizle
+    setRemoteStreams({});
 
     if (socket) {
       socket.emit('voice:leave', { userId: user.id });
     }
+
+    console.log('👋 Left voice channel');
   };
 
   const toggleMute = () => {
@@ -164,27 +159,82 @@ export const VoiceProvider = ({ children }) => {
   };
 
   const toggleDeafen = () => {
-    const newDeafenState = !isDeafened;
-    setIsDeafened(newDeafenState);
+    setIsDeafened(!isDeafened);
+  };
+
+  const toggleCamera = async () => {
+    if (isCameraOn) {
+      // Turn off camera
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
+      }
+      setIsCameraOn(false);
+
+      // Replace with audio-only stream
+      Object.values(peersRef.current).forEach(call => {
+        const sender = call.peerConnection
+          .getSenders()
+          .find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(null);
+        }
+      });
+    } else {
+      // Turn on camera
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: true, 
+          video: true 
+        });
+        
+        cameraStreamRef.current = stream;
+        setIsCameraOn(true);
+
+        // Replace stream in all peer connections
+        Object.values(peersRef.current).forEach(call => {
+          stream.getTracks().forEach(track => {
+            const sender = call.peerConnection
+              .getSenders()
+              .find(s => s.track?.kind === track.kind);
+            if (sender) {
+              sender.replaceTrack(track);
+            }
+          });
+        });
+
+        console.log('📹 Camera enabled');
+      } catch (error) {
+        console.error('Failed to enable camera:', error);
+      }
+    }
   };
 
   const shareScreen = async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: true, 
+        audio: true 
+      });
+      
       screenStreamRef.current = stream;
       setIsSharingScreen(true);
 
-      const screenTrack = stream.getVideoTracks()[0];
-
-      // Mevcut bağlantılardaki video izini (dummy track) ekran paylaşımı ile değiştir
       Object.values(peersRef.current).forEach(call => {
-        const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+        const sender = call.peerConnection
+          .getSenders()
+          .find(s => s.track?.kind === 'video');
+        
         if (sender) {
-          sender.replaceTrack(screenTrack);
+          sender.replaceTrack(stream.getVideoTracks()[0]);
         }
       });
 
-      screenTrack.onended = () => stopScreenShare();
+      stream.getVideoTracks()[0].onended = () => {
+        stopScreenShare();
+      };
+
+      console.log('🖥️ Started screen sharing');
     } catch (error) {
       console.error('Failed to share screen:', error);
     }
@@ -197,26 +247,34 @@ export const VoiceProvider = ({ children }) => {
     }
     setIsSharingScreen(false);
 
-    // Geriye boş video izini (Dummy Track) koy
-    const dummyTrack = createDummyVideoTrack();
-    Object.values(peersRef.current).forEach(call => {
-      const sender = call.peerConnection.getSenders().find(s => s.track?.kind === 'video');
-      if (sender) {
-        sender.replaceTrack(dummyTrack);
-      }
-    });
+    // Switch back to camera or audio
+    if (cameraStreamRef.current) {
+      Object.values(peersRef.current).forEach(call => {
+        const sender = call.peerConnection
+          .getSenders()
+          .find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(cameraStreamRef.current.getVideoTracks()[0]);
+        }
+      });
+    }
+
+    console.log('🖥️ Stopped screen sharing');
   };
 
-  // State tabanlı stream yönetimi
   const addRemoteStream = (userId, stream) => {
-    setRemoteStreams(prev => {
-      if (prev.some(s => s.userId === userId)) return prev;
-      return [...prev, { userId, stream }];
-    });
+    setRemoteStreams(prev => ({
+      ...prev,
+      [userId]: stream,
+    }));
   };
 
   const removeRemoteStream = (userId) => {
-    setRemoteStreams(prev => prev.filter(s => s.userId !== userId));
+    setRemoteStreams(prev => {
+      const updated = { ...prev };
+      delete updated[userId];
+      return updated;
+    });
   };
 
   const value = {
@@ -224,12 +282,15 @@ export const VoiceProvider = ({ children }) => {
     isMuted,
     isDeafened,
     isSharingScreen,
+    isCameraOn,
     connectedUsers,
-    remoteStreams, // UI'da kullanmak için dışa aktar
+    remoteStreams,
+    localStream: cameraStreamRef.current || localStreamRef.current,
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleMute,
     toggleDeafen,
+    toggleCamera,
     shareScreen,
     stopScreenShare,
   };
