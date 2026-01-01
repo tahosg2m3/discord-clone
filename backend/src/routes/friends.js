@@ -17,21 +17,32 @@ router.get('/:userId/pending', (req, res) => {
   res.json(requests);
 });
 
-// Send friend request
+// Send friend request (GÜNCELLENDİ: Kullanıcı adı ile çalışır)
 router.post('/request', (req, res) => {
-  const { fromUserId, toUserId } = req.body;
+  const { fromUserId, targetUsername } = req.body;
   
-  if (!fromUserId || !toUserId) {
-    return res.status(400).json({ error: 'Both user IDs required' });
+  if (!fromUserId || !targetUsername) {
+    return res.status(400).json({ error: 'User ID and Target Username required' });
   }
+
+  // 1. Kullanıcı adından hedef kullanıcıyı bul
+  const targetUser = storage.getUserByUsername(targetUsername.trim());
+
+  if (!targetUser) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const toUserId = targetUser.id;
 
   if (fromUserId === toUserId) {
     return res.status(400).json({ error: 'Cannot add yourself' });
   }
 
+  // 2. İsteği oluştur
   const request = storage.createFriendRequest(fromUserId, toUserId);
   
   if (!request) {
+    // createFriendRequest null dönerse ya zaten arkadaştır ya da istek zaten vardır
     return res.status(400).json({ error: 'Request already exists or users are friends' });
   }
 

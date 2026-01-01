@@ -1,88 +1,124 @@
-import { useEffect, useRef } from 'react';
-import { X, Maximize2, Minimize2 } from 'lucide-react';
+// frontend/src/components/voice/VideoGrid.jsx
+import { useEffect, useRef, useState } from 'react';
 import { useVoice } from '../../context/VoiceContext';
-import { useState } from 'react';
+import { Maximize2, Minimize2, X } from 'lucide-react';
+
+const VideoPlayer = ({ stream, userId, isDeafened, onClick, isMaximized, isLocal }) => {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  // isDeafened true ise ve yayın yerel değilse sesi kapat
+  useEffect(() => {
+    if (videoRef.current) {
+      // Kendi sesimizi duymak istemeyiz, o yüzden local ise muted=true
+      if (isLocal) {
+        videoRef.current.muted = true;
+      } else {
+        videoRef.current.muted = isDeafened;
+      }
+    }
+  }, [isDeafened, isLocal]);
+
+  return (
+    <div 
+      onClick={onClick}
+      className={`relative bg-black rounded-lg overflow-hidden shadow-lg group cursor-pointer transition-all
+        ${isMaximized ? 'fixed inset-4 z-50 border-2 border-blue-500' : 'aspect-video hover:ring-2 hover:ring-blue-500'}
+      `}
+    >
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className={`w-full h-full ${isMaximized ? 'object-contain' : 'object-cover'}`}
+      />
+      
+      {/* Kullanıcı Adı */}
+      <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-white text-xs backdrop-blur-sm">
+        {userId} {isLocal ? '(You)' : ''}
+      </div>
+
+      {/* Büyütme İkonu */}
+      {!isMaximized && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded text-white">
+            <Maximize2 className="w-4 h-4" />
+        </div>
+      )}
+      
+      {/* Küçültme İkonu */}
+      {isMaximized && (
+        <div className="absolute top-2 right-2 bg-black/50 p-2 rounded-full text-white hover:bg-black/70">
+            <Minimize2 className="w-6 h-6" />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function VideoGrid({ onClose }) {
-  const { localStream, remoteStreams, connectedUsers, isDeafened } = useVoice();
-  const [fullscreenUserId, setFullscreenUserId] = useState(null);
+  const { remoteStreams, localStream, isDeafened, isCameraOn, isSharingScreen } = useVoice();
+  const [maximizedUser, setMaximizedUser] = useState(null);
 
-  const VideoTile = ({ stream, userId, username, isLocal }) => {
-    const videoRef = useRef(null);
-    const isFullscreen = fullscreenUserId === userId;
+  // Gösterilecek bir şey var mı? (Kamera açık mı, Ekran paylaşımı var mı veya karşıdan yayın var mı?)
+  const shouldShowLocal = localStream && (isCameraOn || isSharingScreen);
+  const hasRemote = Object.keys(remoteStreams).length > 0;
 
-    useEffect(() => {
-      if (videoRef.current && stream) {
-        videoRef.current.srcObject = stream;
-        if (!isLocal) {
-          videoRef.current.muted = isDeafened;
-        }
-      }
-    }, [stream, isDeafened]);
+  if (!shouldShowLocal && !hasRemote) return null;
 
-    return (
-      <div
-        className={`relative bg-gray-900 rounded-lg overflow-hidden group ${
-          isFullscreen ? 'col-span-full row-span-full' : ''
-        }`}
-      >
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={isLocal}
-          className="w-full h-full object-cover"
-        />
-        
-        <div className="absolute bottom-2 left-2 bg-black/50 px-3 py-1 rounded-full text-white text-sm">
-          {username || 'You'}
-        </div>
-
-        <button
-          onClick={() => setFullscreenUserId(isFullscreen ? null : userId)}
-          className="absolute top-2 right-2 p-2 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-        </button>
-      </div>
-    );
+  const toggleMaximize = (id) => {
+    setMaximizedUser(maximizedUser === id ? null : id);
   };
 
   return (
-    <div className="fixed inset-0 bg-black/90 z-50 flex flex-col">
-      <div className="flex items-center justify-between p-4 bg-gray-900">
-        <h2 className="text-white text-lg font-semibold">Video Chat</h2>
-        <button
-          onClick={onClose}
-          className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-        >
-          <X className="w-6 h-6 text-white" />
-        </button>
-      </div>
-
-      <div className="flex-1 p-4 grid grid-cols-2 md:grid-cols-3 gap-4 overflow-auto">
-        {localStream && (
-          <VideoTile
-            stream={localStream}
-            userId="local"
-            username="You"
-            isLocal={true}
-          />
+    <div className="relative bg-gray-800 p-4 border-b border-gray-700 min-h-[200px] flex flex-col">
+        {onClose && (
+            <button 
+                onClick={onClose}
+                className="absolute top-2 right-2 z-10 p-1 bg-black/50 text-white rounded hover:bg-black/70"
+            >
+                <X className="w-5 h-5" />
+            </button>
         )}
+        
+        <h3 className="text-gray-400 text-xs uppercase font-bold mb-3">Video / Screenshare</h3>
 
-        {Object.entries(remoteStreams).map(([userId, stream]) => {
-          const user = connectedUsers.find(u => u.userId === userId);
-          return (
-            <VideoTile
-              key={userId}
-              stream={stream}
-              userId={userId}
-              username={user?.username}
-              isLocal={false}
-            />
-          );
-        })}
-      </div>
+        <div className={`grid gap-4 ${maximizedUser ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'}`}>
+            
+            {/* Kendi Yayınımız */}
+            {shouldShowLocal && (
+                 <VideoPlayer
+                    key="local"
+                    userId="You"
+                    stream={localStream}
+                    isDeafened={isDeafened}
+                    isLocal={true}
+                    onClick={() => toggleMaximize('local')}
+                    isMaximized={maximizedUser === 'local'}
+                 />
+            )}
+
+            {/* Diğer Yayınlar */}
+            {Object.entries(remoteStreams).map(([userId, stream]) => {
+                if (maximizedUser && maximizedUser !== userId) return null;
+
+                return (
+                    <VideoPlayer
+                        key={userId}
+                        userId={userId}
+                        stream={stream}
+                        isDeafened={isDeafened}
+                        isLocal={false}
+                        onClick={() => toggleMaximize(userId)}
+                        isMaximized={maximizedUser === userId}
+                    />
+                );
+            })}
+        </div>
     </div>
   );
 }

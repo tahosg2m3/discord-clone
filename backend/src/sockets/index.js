@@ -1,4 +1,4 @@
-﻿// backend/src/sockets/index.js - KOMPLE GÜNCEL VERSİYON
+﻿// backend/src/sockets/index.js
 const messageHandler = require('./handlers/messageHandler');
 const userHandler = require('./handlers/userHandler');
 const typingHandler = require('./handlers/typingHandler');
@@ -49,9 +49,10 @@ module.exports = (io) => {
     socket.on('typing:start', (data) => typingHandler.handleStart(io, socket, data));
     socket.on('typing:stop', (data) => typingHandler.handleStop(io, socket, data));
 
-    // Voice events
-    socket.on('voice:join', (data) => voiceHandler.handleJoinVoice(io, socket, data));
-    socket.on('voice:leave', (data) => voiceHandler.handleLeaveVoice(io, socket, data));
+    // --- DÜZELTME BURADA ---
+    // Voice Handler artık kendi listener'larını kuruyor, onu fonksiyon olarak çağırıyoruz.
+    voiceHandler(io, socket);
+    // ----------------------
 
     // DM events
     socket.on('dm:send', (data) => dmHandler.handleSendDM(io, socket, data));
