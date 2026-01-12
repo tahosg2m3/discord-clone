@@ -6,7 +6,8 @@ module.exports = (io, socket) => {
   
   // --- JOIN EVENT ---
   socket.on('voice:join', (data) => {
-    const { channelId, userId, username } = data;
+    // peerId'yi de alıyoruz (Dinamik ID)
+    const { channelId, userId, username, peerId } = data; 
     
     if (!voiceChannels.has(channelId)) {
       voiceChannels.set(channelId, []);
@@ -14,19 +15,24 @@ module.exports = (io, socket) => {
     
     const users = voiceChannels.get(channelId);
     
-    // Kullanıcı zaten listede mi kontrol et (duplicate önleme)
+    // Kullanıcı zaten listede mi kontrol et
     const existingUser = users.find(u => u.userId === userId);
     if (!existingUser) {
-        users.push({ userId, username, socketId: socket.id });
+        // Listeye peerId ile birlikte ekle
+        users.push({ userId, username, peerId, socketId: socket.id });
+    } else {
+        // Eğer kullanıcı zaten varsa (sayfa yenileme vb.), peerId'sini güncelle
+        existingUser.peerId = peerId;
+        existingUser.socketId = socket.id;
     }
     
     // Kanalın odasına (socket room) katıl
     socket.join(`voice:${channelId}`);
 
-    // Odadaki diğerlerine haber ver
-    socket.to(`voice:${channelId}`).emit('voice:user-joined', { userId, username });
+    // Odadaki diğerlerine haber ver (peerId'yi de gönder)
+    socket.to(`voice:${channelId}`).emit('voice:user-joined', { userId, username, peerId });
     
-    console.log(`🎤 ${username} joined voice channel ${channelId}`);
+    console.log(`🎤 ${username} joined voice channel ${channelId} with PeerID: ${peerId}`);
   });
 
   // --- LEAVE EVENT ---
@@ -50,7 +56,6 @@ module.exports = (io, socket) => {
   });
 
   // --- DISCONNECT EVENT ---
-  // Kullanıcı tarayıcıyı kapatırsa da temizle
   socket.on('disconnect', () => {
     for (const [channelId, users] of voiceChannels.entries()) {
       const userIndex = users.findIndex(u => u.socketId === socket.id);

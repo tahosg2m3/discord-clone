@@ -15,6 +15,8 @@ export const useVoice = () => {
 export const VoiceProvider = ({ children }) => {
   const { socket } = useSocket();
   const { user } = useAuth();
+  
+  // State
   const [peer, setPeer] = useState(null);
   const [inVoiceChannel, setInVoiceChannel] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -24,6 +26,7 @@ export const VoiceProvider = ({ children }) => {
   const [connectedUsers, setConnectedUsers] = useState([]);
   const [remoteStreams, setRemoteStreams] = useState({});
   
+  // Refs
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
   const peersRef = useRef({});
@@ -41,11 +44,15 @@ export const VoiceProvider = ({ children }) => {
     return track;
   };
 
+  // 1. PeerJS Başlatma (Dinamik ID ile)
   useEffect(() => {
     if (!user) return;
     let mounted = true;
 
-    const newPeer = new Peer(user.id, {
+    // ID'nin sonuna rastgele sayı ekliyoruz (ÇÖZÜM)
+    const myPeerId = `${user.id}-${Math.floor(Math.random() * 100000)}`;
+
+    const newPeer = new Peer(myPeerId, {
       host: import.meta.env.VITE_PEER_HOST || 'localhost',
       port: import.meta.env.VITE_PEER_PORT || 9000,
       path: '/peerjs',
@@ -54,22 +61,32 @@ export const VoiceProvider = ({ children }) => {
 
     newPeer.on('open', (id) => {
       if (!mounted) return;
-      console.log('🎤 Peer connected:', id);
+      console.log('🎤 Peer connected with ID:', id);
       setPeer(newPeer);
     });
 
+    // Gelen aramaları karşılama
     newPeer.on('call', (call) => {
-      console.log('📞 Incoming call from:', call.peer);
+      console.log('📞 Incoming call from peer:', call.peer);
+      
       if (localStreamRef.current) {
         call.answer(localStreamRef.current);
+        
+        // Arayan kişinin kim olduğunu metadata'dan alıyoruz
+        const callerUserId = call.metadata?.userId || call.peer;
+
         call.on('stream', (remoteStream) => {
-          addRemoteStream(call.peer, remoteStream);
+          addRemoteStream(callerUserId, remoteStream);
         });
-        peersRef.current[call.peer] = call;
+        
+        peersRef.current[callerUserId] = call;
       }
     });
 
-    newPeer.on('error', (err) => console.error('PeerJS Error:', err));
+    newPeer.on('error', (err) => {
+        console.error('PeerJS Error:', err);
+        // ID çakışması olursa yok say, çünkü dinamik ID kullanıyoruz
+    });
 
     return () => {
       mounted = false;
@@ -78,19 +95,30 @@ export const VoiceProvider = ({ children }) => {
     };
   }, [user]);
 
+  // 2. Socket Olaylarını Dinleme
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !peer || !user) return;
 
-    socket.on('voice:user-joined', ({ userId, username }) => {
+    // Yeni kullanıcı katıldığında
+    socket.on('voice:user-joined', ({ userId, username, peerId }) => {
       console.log('👤 User joined voice:', username);
+      
+      // Kullanıcı listesine ekle
       setConnectedUsers(prev => {
         if (prev.find(u => u.userId === userId)) return prev;
         return [...prev, { userId, username }];
       });
       
-      if (peer && localStreamRef.current) {
+      // Eğer yayındaysak, yeni geleni ara
+      if (localStreamRef.current) {
+        // Eski bağlantı varsa kapat
         if (peersRef.current[userId]) peersRef.current[userId].close();
-        const call = peer.call(userId, localStreamRef.current);
+        
+        // Gelen dinamik peerId'yi ara ve KENDİ userId'mizi metadata olarak gönder
+        const call = peer.call(peerId, localStreamRef.current, {
+            metadata: { userId: user.id }
+        });
+        
         call.on('stream', (remoteStream) => {
           addRemoteStream(userId, remoteStream);
         });
@@ -98,6 +126,7 @@ export const VoiceProvider = ({ children }) => {
       }
     });
 
+    // Kullanıcı ayrıldığında
     socket.on('voice:user-left', ({ userId }) => {
       console.log('👋 User left voice:', userId);
       setConnectedUsers(prev => prev.filter(u => u.userId !== userId));
@@ -112,8 +141,9 @@ export const VoiceProvider = ({ children }) => {
       socket.off('voice:user-joined');
       socket.off('voice:user-left');
     };
-  }, [socket, peer]);
+  }, [socket, peer, user]);
 
+  // 3. Kanala Katılma Fonksiyonu
   const joinVoiceChannel = async (channelId) => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -122,10 +152,16 @@ export const VoiceProvider = ({ children }) => {
 
       localStreamRef.current = combinedStream;
       setInVoiceChannel(true);
-      setIsMuted(false); // Başlangıçta mute kapalı olsun
+      setIsMuted(false);
 
-      if (socket) {
-        socket.emit('voice:join', { channelId, userId: user.id, username: user.username });
+      if (socket && peer) {
+        // Backend'e dinamik peerId'mizi gönderiyoruz
+        socket.emit('voice:join', { 
+            channelId, 
+            userId: user.id, 
+            username: user.username,
+            peerId: peer.id 
+        });
       }
       console.log('🎤 Joined voice channel');
     } catch (error) {
@@ -158,16 +194,12 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  // GÜNCELLENMİŞ TOGGLE MUTE
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsMuted(!audioTrack.enabled);
-        console.log('Microphone toggled. Muted:', !audioTrack.enabled);
-      } else {
-        console.warn('No audio track found to mute.');
       }
     }
   };
