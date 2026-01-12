@@ -1,9 +1,9 @@
-﻿// backend/src/routes/channels.js
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const storage = require('../storage/inMemory');
+const { messageService } = require('../services/messageService'); // Mesaj servisini ekledik
 
-// GET /api/channels?serverId=xxx - Get channels by server
+// GET /api/channels?serverId=xxx - Sunucuya ait kanalları getir
 router.get('/', (req, res) => {
   const { serverId } = req.query;
   
@@ -15,7 +15,7 @@ router.get('/', (req, res) => {
   res.json(channels);
 });
 
-// GET /api/channels/:id - Get channel by ID
+// GET /api/channels/:id - ID'ye göre kanal getir
 router.get('/:id', (req, res) => {
   const channel = storage.getChannelById(req.params.id);
   if (!channel) {
@@ -24,9 +24,19 @@ router.get('/:id', (req, res) => {
   res.json(channel);
 });
 
-// POST /api/channels - Create new channel
+// YENİ: GET /api/channels/:id/messages - Kanalın mesaj geçmişini getir
+router.get('/:id/messages', (req, res) => {
+  const { id } = req.params;
+  const { limit } = req.query;
+  
+  // messageService üzerinden mesajları çek (Varsayılan limit 50)
+  const messages = messageService.getChannelMessages(id, parseInt(limit) || 50);
+  res.json(messages);
+});
+
+// POST /api/channels - Yeni kanal oluştur
 router.post('/', (req, res) => {
-  const { serverId, name, type } = req.body; // type eklendi
+  const { serverId, name, type } = req.body; 
   
   if (!serverId || !name || !name.trim()) {
     return res.status(400).json({ error: 'serverId and name required' });
@@ -42,7 +52,7 @@ router.post('/', (req, res) => {
   res.status(201).json(channel);
 });
 
-// DELETE /api/channels/:id - Delete channel
+// DELETE /api/channels/:id - Kanal sil
 router.delete('/:id', (req, res) => {
   const deleted = storage.deleteChannel(req.params.id);
   if (!deleted) {

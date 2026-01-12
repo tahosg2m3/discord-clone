@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import MessageList from '../chat/MessageList';
 import MessageInput from '../chat/MessageInput';
 import TypingIndicator from '../chat/TypingIndicator';
+import { fetchChannelMessages } from '../../services/api'; // Yeni import
 
 export default function ChatArea() {
   const { currentChannel } = useServer();
@@ -14,16 +15,39 @@ export default function ChatArea() {
   const [messages, setMessages] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
 
+  // Kanal değiştiğinde mesaj geçmişini çek
+  useEffect(() => {
+    // Önceki mesajları temizle
+    setMessages([]);
+    setTypingUsers([]);
+
+    if (currentChannel?.id) {
+      // API'den mesajları getir
+      fetchChannelMessages(currentChannel.id)
+        .then((data) => {
+          setMessages(data);
+        })
+        .catch((error) => {
+          console.error("Mesajlar yüklenemedi:", error);
+        });
+    }
+  }, [currentChannel]);
+
+  // Socket olaylarını dinle
   useEffect(() => {
     if (!socket) return;
 
-    // Listen for new messages
+    // Yeni mesaj geldiğinde
     socket.on('message:receive', (message) => {
-      setMessages((prev) => [...prev, message]);
+      // Sadece şu anki kanalın mesajıysa ekle (Güvenlik/UX önlemi)
+      if (currentChannel && message.channelId === currentChannel.id) {
+        setMessages((prev) => [...prev, message]);
+      }
     });
 
-    // Listen for user joined
+    // Kullanıcı katıldı
     socket.on('user:joined', (data) => {
+      // Sadece aktif kanaldaysa gösterilebilir (opsiyonel kontrol eklenebilir)
       setMessages((prev) => [
         ...prev,
         {
@@ -35,7 +59,7 @@ export default function ChatArea() {
       ]);
     });
 
-    // Listen for user left
+    // Kullanıcı ayrıldı
     socket.on('user:left', (data) => {
       setMessages((prev) => [
         ...prev,
@@ -48,7 +72,7 @@ export default function ChatArea() {
       ]);
     });
 
-    // Listen for typing indicators
+    // Yazıyor göstergesi
     socket.on('typing:active', (data) => {
       setTypingUsers((prev) => {
         if (!prev.includes(data.username)) {
@@ -62,7 +86,7 @@ export default function ChatArea() {
       setTypingUsers((prev) => prev.filter((u) => u !== data.username));
     });
 
-    // Cleanup
+    // Temizlik
     return () => {
       socket.off('message:receive');
       socket.off('user:joined');
@@ -70,13 +94,7 @@ export default function ChatArea() {
       socket.off('typing:active');
       socket.off('typing:inactive');
     };
-  }, [socket]);
-
-  // Clear messages when changing channels
-  useEffect(() => {
-    setMessages([]);
-    setTypingUsers([]);
-  }, [currentChannel]);
+  }, [socket, currentChannel]); // currentChannel değiştiğinde listener güncellensin
 
   const handleSendMessage = (content) => {
     if (!socket || !content.trim()) return;
@@ -100,6 +118,15 @@ export default function ChatArea() {
       });
     }
   };
+
+  // Kanal seçili değilse
+  if (!currentChannel) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-700 text-gray-400">
+        <p>Select a channel to start chatting</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-gray-700">
