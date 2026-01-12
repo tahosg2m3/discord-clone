@@ -3,7 +3,8 @@ const API_URL = 'http://localhost:3001/api';
 
 // Generic fetch wrapper
 async function request(endpoint, options = {}) {
-  const token = localStorage.getItem('token');
+  // Login formunda 'chat_token' olarak kaydedildiği için buradan da öyle okuyoruz
+  const token = localStorage.getItem('chat_token');
   
   const headers = {
     'Content-Type': 'application/json',
@@ -41,17 +42,18 @@ export const deleteServer = (id) => request(`/servers/${id}`, { method: 'DELETE'
 // Channels
 export const fetchChannels = (serverId) => request(`/channels?serverId=${serverId}`);
 export const fetchChannelById = (id) => request(`/channels/${id}`);
+// YENİ EKLENEN FONKSİYON:
+export const fetchChannelMessages = (channelId) => request(`/channels/${channelId}/messages`);
 export const createChannel = (serverId, name, type = 'text') => request('/channels', { method: 'POST', body: JSON.stringify({ serverId, name, type }) });
 export const deleteChannel = (id) => request(`/channels/${id}`, { method: 'DELETE' });
 
 // Users
 export const fetchUsers = () => request('/users');
 
-// Friends (YENİ EKLENENLER)
+// Friends
 export const fetchFriends = (userId) => request(`/friends/${userId}`);
 export const fetchPendingRequests = (userId) => request(`/friends/${userId}/pending`);
 
-// GÜNCELLEME: targetUsername gönderiyoruz
 export const sendFriendRequest = (fromUserId, targetUsername) => 
   request('/friends/request', { 
     method: 'POST', 
