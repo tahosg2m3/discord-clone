@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 exports.handleSendDM = (io, socket, data) => {
   const { receiverId, content } = data;
   const senderId = socket.userData.userId;
+  const username = socket.userData.username; // EKLENDİ: Gönderen adı
 
   if (!content || !receiverId || !senderId) return;
 
@@ -15,6 +16,7 @@ exports.handleSendDM = (io, socket, data) => {
     id: uuidv4(),
     conversationId: conversation.id,
     senderId,
+    username, // EKLENDİ: Mesaj listesinde görünmesi için şart
     content,
     timestamp: Date.now(),
     type: 'text'
@@ -36,11 +38,11 @@ exports.handleSendDM = (io, socket, data) => {
     message
   });
   
-  // Ayrıca konuşma listesinin güncellenmesi için event atabiliriz
+  // Konuşma listesini güncelle (Son mesaj bilgisi için)
   const conversationUpdate = {
      ...conversation,
      lastMessageAt: message.timestamp,
-     otherUser: storage.getUserById(senderId) // Alıcı için 'diğer kişi' gönderendir
+     otherUser: storage.getUserById(senderId)
   };
   
   io.to(`user:${receiverId}`).emit('dm:conversation-update', conversationUpdate);

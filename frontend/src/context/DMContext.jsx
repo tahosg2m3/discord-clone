@@ -1,7 +1,7 @@
-// frontend/src/context/DMContext.jsx
 import { createContext, useContext, useState, useEffect } from 'react';
 import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
+import { fetchDMConversations, createDMConversation } from '../services/api';
 
 const DMContext = createContext(null);
 
@@ -14,66 +14,70 @@ export const useDM = () => {
 export const DMProvider = ({ children }) => {
   const { socket } = useSocket();
   const { user } = useAuth();
+  
   const [conversations, setConversations] = useState([]);
   const [currentConversation, setCurrentConversation] = useState(null);
-  const [dmMessages, setDmMessages] = useState({});
 
+  // Kullanıcı değişince konuşmaları yükle
   useEffect(() => {
     if (user) {
       loadConversations();
     }
   }, [user]);
 
+  // Yeni konuşma veya güncelleme gelince listeyi yenile
   useEffect(() => {
     if (!socket) return;
 
-    socket.on('dm:receive', (message) => {
-      setDmMessages(prev => ({
-        ...prev,
-        [message.conversationId]: [
-          ...(prev[message.conversationId] || []),
-          message,
-        ],
-      }));
-    });
+    const handleUpdate = (updatedConversation) => {
+      setConversations(prev => {
+        // Listede varsa güncelle, yoksa başa ekle
+        const exists = prev.find(c => c.id === updatedConversation.id);
+        if (exists) {
+          return prev.map(c => c.id === updatedConversation.id ? { ...c, ...updatedConversation } : c);
+        }
+        return [updatedConversation, ...prev];
+      });
+    };
+
+    socket.on('dm:conversation-update', handleUpdate);
 
     return () => {
-      socket.off('dm:receive');
+      socket.off('dm:conversation-update', handleUpdate);
     };
   }, [socket]);
 
   const loadConversations = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/dm/${user.id}`);
-      const data = await response.json();
+      const data = await fetchDMConversations(user.id);
       setConversations(data);
     } catch (error) {
-      console.error('Failed to load conversations:', error);
+      console.error('Conversations load failed:', error);
     }
   };
 
   const startConversation = async (otherUserId) => {
     try {
-      const response = await fetch('http://localhost:3001/api/dm/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId1: user.id,
-          userId2: otherUserId,
-        }),
-      });
-
-      const conversation = await response.json();
+      // Zaten varsa onu aç
+      const existing = conversations.find(c => 
+        (c.user1Id === otherUserId || c.user2Id === otherUserId)
+      );
       
-      // Load messages for this conversation
-      await loadConversationMessages(conversation.id);
+      if (existing) {
+        setCurrentConversation(existing);
+        return existing;
+      }
+
+      // Yoksa API ile oluştur
+      const conversation = await createDMConversation(user.id, otherUserId);
       
       setCurrentConversation(conversation);
-      
-      // Add to conversations if not already there
-      if (!conversations.find(c => c.id === conversation.id)) {
-        setConversations([...conversations, conversation]);
-      }
+      setConversations(prev => {
+         if(!prev.find(c => c.id === conversation.id)) {
+            return [conversation, ...prev];
+         }
+         return prev;
+      });
 
       return conversation;
     } catch (error) {
@@ -81,37 +85,11 @@ export const DMProvider = ({ children }) => {
     }
   };
 
-  const loadConversationMessages = async (conversationId) => {
-    try {
-      const response = await fetch(
-        `http://localhost:3001/api/dm/messages/${conversationId}`
-      );
-      const messages = await response.json();
-      setDmMessages(prev => ({
-        ...prev,
-        [conversationId]: messages,
-      }));
-    } catch (error) {
-      console.error('Failed to load messages:', error);
-    }
-  };
-
-  const sendDM = (content) => {
-    if (!socket || !currentConversation) return;
-
-    socket.emit('dm:send', {
-      conversationId: currentConversation.id,
-      content,
-    });
-  };
-
   const value = {
     conversations,
     currentConversation,
     setCurrentConversation,
-    dmMessages,
-    startConversation,
-    sendDM,
+    startConversation
   };
 
   return <DMContext.Provider value={value}>{children}</DMContext.Provider>;
