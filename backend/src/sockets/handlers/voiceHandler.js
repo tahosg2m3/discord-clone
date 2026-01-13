@@ -29,8 +29,13 @@ module.exports = (io, socket) => {
     // Kanalın odasına (socket room) katıl
     socket.join(`voice:${channelId}`);
 
-    // Odadaki diğerlerine haber ver (peerId'yi de gönder)
+    // 1. Odadaki DİĞERLERİNE haber ver (Mevcut kod)
     socket.to(`voice:${channelId}`).emit('voice:user-joined', { userId, username, peerId });
+
+    // 2. YENİ EKLENEN KISIM: Katılan kişiye MEVCUT kullanıcıları gönder
+    // Kendisi hariç diğerlerini filtrele
+    const otherUsers = users.filter(u => u.userId !== userId);
+    socket.emit('voice:existing-users', otherUsers);
     
     console.log(`🎤 ${username} joined voice channel ${channelId} with PeerID: ${peerId}`);
   });
