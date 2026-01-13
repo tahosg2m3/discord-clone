@@ -1,4 +1,3 @@
-// frontend/src/context/VoiceContext.jsx
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
@@ -85,7 +84,6 @@ export const VoiceProvider = ({ children }) => {
 
     newPeer.on('error', (err) => {
         console.error('PeerJS Error:', err);
-        // ID çakışması olursa yok say, çünkü dinamik ID kullanıyoruz
     });
 
     return () => {
@@ -99,17 +97,30 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     if (!socket || !peer || !user) return;
 
+    // YENİ EKLENEN: Odaya ilk girdiğimizde mevcut kullanıcıları listeye al
+    socket.on('voice:existing-users', (users) => {
+        console.log('🎤 Existing users in channel:', users);
+        setConnectedUsers(prev => {
+            // Mevcut listeyi koru, yeni gelenleri ekle (Duplicate önlemek için)
+            const newUsers = [...prev];
+            users.forEach(u => {
+                if (!newUsers.find(existing => existing.userId === u.userId)) {
+                    newUsers.push(u);
+                }
+            });
+            return newUsers;
+        });
+    });
+
     // Yeni kullanıcı katıldığında
     socket.on('voice:user-joined', ({ userId, username, peerId }) => {
       console.log('👤 User joined voice:', username);
       
-      // Kullanıcı listesine ekle
       setConnectedUsers(prev => {
         if (prev.find(u => u.userId === userId)) return prev;
         return [...prev, { userId, username }];
       });
       
-      // Eğer yayındaysak, yeni geleni ara
       if (localStreamRef.current) {
         // Eski bağlantı varsa kapat
         if (peersRef.current[userId]) peersRef.current[userId].close();
@@ -138,6 +149,7 @@ export const VoiceProvider = ({ children }) => {
     });
 
     return () => {
+      socket.off('voice:existing-users');
       socket.off('voice:user-joined');
       socket.off('voice:user-left');
     };
