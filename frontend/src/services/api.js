@@ -21,10 +21,12 @@ export const verifyToken = () => request('/auth/verify');
 // Servers
 export const fetchServers = () => request('/servers');
 export const fetchServerById = (id) => request(`/servers/${id}`);
-export const createServer = (name) => request('/servers', { method: 'POST', body: JSON.stringify({ name }) });
+export const createServer = (name, creatorId) => request('/servers', { method: 'POST', body: JSON.stringify({ name, creatorId }) });
 export const deleteServer = (id) => request(`/servers/${id}`, { method: 'DELETE' });
+// YENİ:
+export const joinServer = (inviteCode, userId) => request('/servers/join', { method: 'POST', body: JSON.stringify({ inviteCode, userId }) });
 
-// Channels & Messages (UPDATED)
+// Channels & Messages
 export const fetchChannels = (serverId) => request(`/channels?serverId=${serverId}`);
 export const fetchChannelMessages = (channelId, before = null) => {
   const query = before ? `?before=${before}&limit=50` : '?limit=50';
