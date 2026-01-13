@@ -1,65 +1,90 @@
-﻿import { useEffect, useRef } from 'react';
+﻿import { useEffect, useState, useCallback, useRef } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import Message from './Message';
+import { Loader2 } from 'lucide-react';
 
-export default function MessageList({ messages, currentUser }) {
-  const bottomRef = useRef(null);
-  const containerRef = useRef(null);
-  const prevScrollHeightRef = useRef(0);
+export default function MessageList({ messages, currentUser, onLoadMore, hasMore }) {
+  const virtuosoRef = useRef(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [firstItemIndex, setFirstItemIndex] = useState(10000); // Sanal liste için index hilesi
 
-  // Auto-scroll to bottom on new messages
+  // Mesajlar eklendiğinde (eski mesajlar yüklendiğinde) index'i güncelle
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const container = containerRef.current;
-    const isNearBottom = 
-      container.scrollHeight - container.scrollTop - container.clientHeight < 150;
-
-    // Only auto-scroll if user is near bottom (not reading old messages)
-    if (isNearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (loadingMore) {
+      // Eski mesajlar yüklendiğinde scroll pozisyonunu korumak için index kaydır
+      // Bu kısım Virtuoso'nun otomatik yaptığı bir şeydir ama manuel tetikleme gerekebilir
+      setLoadingMore(false);
     }
-
-    prevScrollHeightRef.current = container.scrollHeight;
   }, [messages]);
 
-  // Group messages by same user if sent within 5 minutes
-  const groupedMessages = messages.reduce((acc, message, index) => {
-    if (message.type === 'system') {
-      acc.push({ ...message, grouped: false });
-      return acc;
+  const handleStartReached = useCallback(() => {
+    if (hasMore && !loadingMore) {
+      setLoadingMore(true);
+      onLoadMore();
+      return false; 
     }
+  }, [hasMore, loadingMore, onLoadMore]);
 
-    const prevMessage = messages[index - 1];
-    const shouldGroup =
-      prevMessage &&
-      prevMessage.type !== 'system' &&
-      prevMessage.username === message.username &&
-      message.timestamp - prevMessage.timestamp < 5 * 60 * 1000; // 5 minutes
+  // Mesajları işle ve grupla
+  const getGroupedMessages = useCallback(() => {
+    return messages.map((message, index) => {
+      if (message.type === 'system') return { ...message, grouped: false };
+      
+      const prevMessage = messages[index - 1];
+      const shouldGroup =
+        prevMessage &&
+        prevMessage.type !== 'system' &&
+        prevMessage.username === message.username &&
+        message.timestamp - prevMessage.timestamp < 5 * 60 * 1000;
 
-    acc.push({ ...message, grouped: shouldGroup });
-    return acc;
-  }, []);
+      return { ...message, grouped: shouldGroup };
+    });
+  }, [messages]);
+
+  const groupedMessages = getGroupedMessages();
+
+  // Scroll'u en aşağıya at (Yeni mesaj geldiğinde)
+  useEffect(() => {
+    if (virtuosoRef.current) {
+        // Otomatik takip zaten açık (followOutput)
+    }
+  }, [messages.length]);
 
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 overflow-y-auto px-4 py-4 space-y-0.5"
-    >
+    <div className="flex-1 px-2 py-4 h-full">
       {groupedMessages.length === 0 ? (
         <div className="flex items-center justify-center h-full text-gray-500">
           <p>No messages yet. Start the conversation!</p>
         </div>
       ) : (
-        groupedMessages.map((message, index) => (
-          <Message
-            key={message.id}
-            message={message}
-            isOwn={message.username === currentUser}
-            grouped={message.grouped}
-          />
-        ))
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ height: '100%' }}
+          data={groupedMessages}
+          startReached={handleStartReached}
+          firstItemIndex={Math.max(0, firstItemIndex - groupedMessages.length)}
+          initialTopMostItemIndex={groupedMessages.length - 1}
+          followOutput={'auto'} // Yeni mesaj gelince aşağı kaydır
+          components={{
+            Header: () => loadingMore && (
+              <div className="flex justify-center py-2">
+                <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+              </div>
+            )
+          }}
+          itemContent={(index, message) => (
+            <div className="pb-0.5">
+              <Message
+                key={message.id}
+                message={message}
+                isOwn={message.username === currentUser.username}
+                userId={currentUser.id}
+                grouped={message.grouped}
+              />
+            </div>
+          )}
+        />
       )}
-      <div ref={bottomRef} />
     </div>
   );
 }

@@ -1,28 +1,35 @@
 ﻿const { messageService } = require('../../services/messageService');
 
-exports.handleSend = (io, socket, data) => {
+exports.handleSend = async (io, socket, data) => {
   const { content, channelId } = data;
 
-  if (!content || !content.trim()) {
-    socket.emit('error', { message: 'Message content required' });
-    return;
-  }
+  if (!content?.trim() || !socket.userData.username) return;
 
-  if (!socket.userData.username) {
-    socket.emit('error', { message: 'User not authenticated' });
-    return;
-  }
-
-  // Create message
-  const message = messageService.createMessage({
+  // Mesaj oluştur (Async çünkü OpenGraph fetch yapıyor)
+  const message = await messageService.createMessage({
     username: socket.userData.username,
+    userId: socket.userData.userId, // userId artık zorunlu
     content: content.trim(),
     channelId,
   });
 
-  // Broadcast to channel room
-  const roomName = `channel:${channelId}`;
-  io.to(roomName).emit('message:receive', message);
+  io.to(`channel:${channelId}`).emit('message:receive', message);
+};
 
-  console.log(`💬 ${socket.userData.username}: ${content.substring(0, 50)}...`);
+exports.handleEdit = (io, socket, data) => {
+  const { messageId, content, channelId } = data;
+  const updatedMessage = messageService.updateMessage(messageId, content, socket.userData.userId);
+
+  if (updatedMessage) {
+    io.to(`channel:${channelId}`).emit('message:update', updatedMessage);
+  }
+};
+
+exports.handleDelete = (io, socket, data) => {
+  const { messageId, channelId } = data;
+  const result = messageService.deleteMessage(messageId, socket.userData.userId);
+
+  if (result) {
+    io.to(`channel:${channelId}`).emit('message:delete', { messageId });
+  }
 };
