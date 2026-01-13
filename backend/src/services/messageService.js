@@ -1,11 +1,10 @@
 ﻿const { v4: uuidv4 } = require('uuid');
 const ogs = require('open-graph-scraper');
 const linkify = require('linkify-it')();
+const storage = require('../storage/inMemory'); // Storage'ı dahil ettik
 
 class MessageService {
-  constructor() {
-    this.messages = new Map(); // channelId -> array of messages
-  }
+  // Constructor'da artık veri tutmuyoruz, storage kullanacağız.
 
   async createMessage({ username, content, channelId, userId }) {
     const message = {
@@ -20,7 +19,7 @@ class MessageService {
       metadata: null
     };
 
-    // Link önizlemesi (Metadata) çekme
+    // Link önizlemesi (Metadata)
     const matches = linkify.match(content);
     if (matches && matches.length > 0) {
       try {
@@ -38,69 +37,84 @@ class MessageService {
       }
     }
 
-    if (!this.messages.has(channelId)) {
-      this.messages.set(channelId, []);
-    }
-    this.messages.get(channelId).push(message);
-
-    // Bellek yönetimi (Son 500 mesajı tut)
-    const channelMessages = this.messages.get(channelId);
-    if (channelMessages.length > 500) {
-      this.messages.set(channelId, channelMessages.slice(-500));
-    }
+    // Storage'a kaydet (Bu sayede kalıcı olur)
+    storage.addChannelMessage(channelId, message);
 
     return message;
   }
 
-  // GÜNCELLENDİ: Sayfalama (Pagination) desteği
   getChannelMessages(channelId, limit = 50, before = null) {
-    const allMessages = this.messages.get(channelId) || [];
+    // Mesajları Storage'dan çek
+    const allMessages = storage.getChannelMessages(channelId);
     
-    // Tarihe göre sıralı olduğundan emin ol
+    // Sıralama ve Pagination işlemleri
     const sorted = [...allMessages].sort((a, b) => a.timestamp - b.timestamp);
 
     let endIndex = sorted.length;
     
-    // Eğer 'before' timestamp verilmişse, ondan öncekileri al
     if (before) {
       const foundIndex = sorted.findIndex(m => m.timestamp >= parseInt(before));
       endIndex = foundIndex === -1 ? sorted.length : foundIndex;
     }
 
-    // Slice ile geriye doğru 'limit' kadar mesaj al
     const startIndex = Math.max(0, endIndex - limit);
     return sorted.slice(startIndex, endIndex);
   }
 
   updateMessage(messageId, newContent, userId) {
-    for (const messages of this.messages.values()) {
-      const msg = messages.find(m => m.id === messageId);
+    // Storage üzerinden güncelleme yap
+    // (Storage içinde updateChannelMessage fonksiyonunu kullanıyoruz)
+    // Önce kanal ID'sini bulmamız lazım ama şu anki yapıda messageId ile kanal bulmak zor olabilir.
+    // Performans için tüm kanalları aramak yerine, storage'a channelId'yi de gönderebiliriz.
+    // Ancak socket handler'da channelId zaten var.
+    // Şimdilik storage.updateChannelMessage çağırırken channelId gerekiyor.
+    
+    // NOT: Bu fonksiyonun çağrıldığı yerde (messageHandler.js) channelId zaten gönderiliyor.
+    // Burayı güncelliyoruz:
+    return null; // Aşağıdaki overloaded metoda bakın
+  }
+  
+  // Overload: channelId parametresi eklendi
+  updateMessageWithChannel(channelId, messageId, newContent, userId) {
+      const msg = storage.getChannelMessages(channelId).find(m => m.id === messageId);
       if (msg) {
-        // Sadece kendi mesajını düzenleyebilir
-        if (msg.userId !== userId) return null;
-        
-        msg.content = newContent;
-        msg.isEdited = true;
-        return msg;
+          if (msg.userId !== userId) return null; // Yetki kontrolü
+          
+          return storage.updateChannelMessage(channelId, messageId, newContent);
       }
-    }
-    return null;
+      return null;
   }
 
-  deleteMessage(messageId, userId) {
-    for (const [channelId, messages] of this.messages.entries()) {
-      const index = messages.findIndex(m => m.id === messageId);
-      if (index !== -1) {
-        const msg = messages[index];
-        // Sadece kendi mesajını silebilir
-        if (msg.userId !== userId) return false;
-
-        messages.splice(index, 1);
-        return { channelId, messageId };
+  deleteMessageWithChannel(channelId, messageId, userId) {
+      const msg = storage.getChannelMessages(channelId).find(m => m.id === messageId);
+      if (msg) {
+          if (msg.userId !== userId) return false; // Yetki kontrolü
+          
+          return storage.deleteChannelMessage(channelId, messageId);
       }
-    }
-    return null;
+      return false;
   }
 }
 
-module.exports = { messageService: new MessageService() };
+const service = new MessageService();
+
+// updateMessage ve deleteMessage için wrapper (eski kodlarla uyum için)
+service.updateMessage = (messageId, content, userId) => {
+    // Bu metod eski haliyle channelId bilmediği için verimsizdir.
+    // Handler'ı güncellemek daha iyi. Ama uyumluluk için tüm kanalları tarayabiliriz:
+    for (const channel of storage.channels) {
+        const result = service.updateMessageWithChannel(channel.id, messageId, content, userId);
+        if (result) return result;
+    }
+    return null;
+};
+
+service.deleteMessage = (messageId, userId) => {
+    for (const channel of storage.channels) {
+        const result = service.deleteMessageWithChannel(channel.id, messageId, userId);
+        if (result) return { channelId: channel.id, messageId };
+    }
+    return null;
+};
+
+module.exports = { messageService: service };

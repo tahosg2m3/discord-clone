@@ -1,5 +1,4 @@
 {
-  "users": [],
   "servers": [
     {
       "id": "default-server",
@@ -26,6 +25,41 @@
         "ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae",
         "c42b0e65-144b-4a4e-a033-dd747506ef08"
       ]
+    },
+    {
+      "id": "3540be37-68c3-4c36-a021-7c696f361275",
+      "name": "aasdadsads",
+      "creatorId": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "inviteCode": "TMOW60",
+      "createdAt": 1768336111275
+    },
+    {
+      "id": "5f5e3f98-23cd-40ce-a224-a1f5529cd067",
+      "name": "asdads",
+      "creatorId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
+      "inviteCode": "MEA1ND",
+      "createdAt": 1768337082830
+    },
+    {
+      "id": "a2b37b53-8229-41f1-8ad6-073c3bfc1332",
+      "name": "1ISF4W",
+      "creatorId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
+      "inviteCode": "Q6C4IL",
+      "createdAt": 1768337418162
+    },
+    {
+      "id": "2b424933-980b-46c1-b3a2-a873c02cb2f6",
+      "name": "annen",
+      "creatorId": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "inviteCode": "YEVWC1",
+      "createdAt": 1768337462192
+    },
+    {
+      "id": "09a6218a-34e4-418d-a1e2-3908be811d8b",
+      "name": "annnnnnn",
+      "creatorId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
+      "inviteCode": "QWTUEG",
+      "createdAt": 1768337472614
     }
   ],
   "channels": [
@@ -52,10 +86,97 @@
       "serverId": "86a77d48-fb87-4a54-8707-dab662b607a4",
       "name": "Lounge",
       "type": "voice"
+    },
+    {
+      "id": "3e893f03-2912-477c-b74d-fb25cb7ff83e",
+      "serverId": "3540be37-68c3-4c36-a021-7c696f361275",
+      "name": "general",
+      "type": "text",
+      "createdAt": 1768336111275
+    },
+    {
+      "id": "3dace2eb-898d-485a-9e25-19e068008f6b",
+      "serverId": "5f5e3f98-23cd-40ce-a224-a1f5529cd067",
+      "name": "general",
+      "type": "text",
+      "createdAt": 1768337082830
+    },
+    {
+      "id": "0ce2dbf6-7f7b-44db-be73-cf9826d582d2",
+      "serverId": "a2b37b53-8229-41f1-8ad6-073c3bfc1332",
+      "name": "general",
+      "type": "text",
+      "createdAt": 1768337418162
+    },
+    {
+      "id": "10d46113-bfcc-4e8b-9b5d-3cbda1526fe8",
+      "serverId": "2b424933-980b-46c1-b3a2-a873c02cb2f6",
+      "name": "general",
+      "type": "text",
+      "createdAt": 1768337462192
+    },
+    {
+      "id": "3d7bba0c-7b58-4b3d-ab7d-2fb006d90b2b",
+      "serverId": "09a6218a-34e4-418d-a1e2-3908be811d8b",
+      "name": "general",
+      "type": "text",
+      "createdAt": 1768337472614
     }
   ],
-  "friendRequests": [],
-  "dmConversations": [],
-  "messages": "[]",
-  "friends": "[]"
+  "users": [
+    {
+      "id": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "username": "annen123gmail.com",
+      "email": "annen123@gmail.com",
+      "password": "$2b$10$YAVmfL9op3fVwU6HGNeJ.OOISp7oXueO2uq0uIclZDd3TMm83dYF2",
+      "avatar": "https://ui-avatars.com/api/?name=annen123gmail.com&background=random",
+      "status": "online",
+      "createdAt": 1768336104551
+    },
+    {
+      "id": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "username": "tahos",
+      "email": "tahos@gmail.com",
+      "password": "$2b$10$2bXw6LT3sBy/yljYe6lL9eAufXH9yS/b894uMj1I7dir7YvReEn4y",
+      "avatar": "https://ui-avatars.com/api/?name=tahos&background=random",
+      "status": "online",
+      "createdAt": 1768343677348
+    }
+  ],
+  "dmConversations": [
+    {
+      "id": "e943a6cd-68bd-4e61-991d-b0d24d416aca",
+      "user1Id": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "user2Id": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "createdAt": 1768343887587
+    }
+  ],
+  "friendRequests": [
+    {
+      "id": "a6c45e58-caa5-49e6-a72c-6f88fc080332",
+      "fromUserId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
+      "toUserId": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "status": "pending",
+      "createdAt": 1768336699937
+    },
+    {
+      "id": "fddab381-c65f-4e2e-bb14-535adaba6871",
+      "fromUserId": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "toUserId": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "status": "accepted",
+      "createdAt": 1768343878900
+    }
+  ],
+  "friendships": [
+    {
+      "id": "2bd03b40-99a7-41ff-b53a-7570e81fe35e",
+      "user1Id": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "user2Id": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "createdAt": 1768343883474
+    }
+  ],
+  "dmMessages": "[[\"e943a6cd-68bd-4e61-991d-b0d24d416aca\",[]]]",
+  "channelMessages": "[[\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",[{\"id\":\"42492471-2fea-4977-a3ff-25acd62f2290\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdadads\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337115939,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ef7a23a8-e4af-4fac-a6c5-df967be587ae\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"adsadladskl\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337117948,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"99fd19ef-8b5c-46e0-ab67-82252913c8e8\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"asd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342859342,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"7ce05369-4aab-4f4b-a187-6547b46a4078\",\"username\":\"tahos\",\"userId\":null,\"content\":\"ad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342864164,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"b01a5616-5cb9-483d-88e1-e4283ebaf4d5\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"das\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343463886,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"d3f4f4c7-3613-4c3f-9c7e-b8a6277bd980\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343472904,\"type\":\"user\",\"isEdited\":false,\"metadata\":null}]]]",
+  "userStatuses": "[[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"online\"],[\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"online\"]]",
+  "serverMembers": "[[\"default-server\",[\"63aac356-43f3-4908-ae6f-264419dd58a4\"]],[\"3540be37-68c3-4c36-a021-7c696f361275\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"86a77d48-fb87-4a54-8707-dab662b607a4\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\",\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"63aac356-43f3-4908-ae6f-264419dd58a4\"]],[\"5f5e3f98-23cd-40ce-a224-a1f5529cd067\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"a2b37b53-8229-41f1-8ad6-073c3bfc1332\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"2b424933-980b-46c1-b3a2-a873c02cb2f6\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"09a6218a-34e4-418d-a1e2-3908be811d8b\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]]]"
 }
