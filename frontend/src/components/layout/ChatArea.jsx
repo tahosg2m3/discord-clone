@@ -1,157 +1,140 @@
-﻿import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import { Hash } from 'lucide-react';
 import { useServer } from '../../context/ServerContext';
 import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
+import { fetchChannelMessages } from '../../services/api';
 import MessageList from '../chat/MessageList';
 import MessageInput from '../chat/MessageInput';
 import TypingIndicator from '../chat/TypingIndicator';
-import { fetchChannelMessages } from '../../services/api'; // Yeni import
+import toast from 'react-hot-toast';
 
 export default function ChatArea() {
   const { currentChannel } = useServer();
   const { socket } = useSocket();
   const { user } = useAuth();
+  
   const [messages, setMessages] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
+  const [hasMore, setHasMore] = useState(true);
 
-  // Kanal değiştiğinde mesaj geçmişini çek
+  // Kanal değişince sıfırla ve ilk mesajları çek
   useEffect(() => {
-    // Önceki mesajları temizle
     setMessages([]);
     setTypingUsers([]);
+    setHasMore(true);
 
     if (currentChannel?.id) {
-      // API'den mesajları getir
       fetchChannelMessages(currentChannel.id)
         .then((data) => {
           setMessages(data);
+          if (data.length < 50) setHasMore(false);
         })
-        .catch((error) => {
-          console.error("Mesajlar yüklenemedi:", error);
-        });
+        .catch(() => toast.error('Failed to load messages'));
     }
   }, [currentChannel]);
 
-  // Socket olaylarını dinle
+  // Sonsuz kaydırma: Eski mesajları yükle
+  const loadMoreMessages = useCallback(async () => {
+    if (!currentChannel?.id || messages.length === 0) return;
+
+    const oldestMessage = messages[0];
+    try {
+      const moreMessages = await fetchChannelMessages(currentChannel.id, oldestMessage.timestamp);
+      
+      if (moreMessages.length === 0) {
+        setHasMore(false);
+      } else {
+        // Eski mesajları başa ekle (Spread operator kullanarak birleştir)
+        setMessages(prev => [...moreMessages, ...prev]);
+      }
+    } catch (error) {
+      console.error('Failed to load more messages', error);
+    }
+  }, [currentChannel, messages]);
+
+  // Socket Listener
   useEffect(() => {
     if (!socket) return;
 
-    // Yeni mesaj geldiğinde
-    socket.on('message:receive', (message) => {
-      // Sadece şu anki kanalın mesajıysa ekle (Güvenlik/UX önlemi)
+    const handleReceive = (message) => {
       if (currentChannel && message.channelId === currentChannel.id) {
-        setMessages((prev) => [...prev, message]);
+        setMessages(prev => [...prev, message]);
       }
-    });
-
-    // Kullanıcı katıldı
-    socket.on('user:joined', (data) => {
-      // Sadece aktif kanaldaysa gösterilebilir (opsiyonel kontrol eklenebilir)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: 'system',
-          content: `${data.username} joined the channel`,
-          timestamp: data.timestamp,
-        },
-      ]);
-    });
-
-    // Kullanıcı ayrıldı
-    socket.on('user:left', (data) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: 'system',
-          content: `${data.username} left the channel`,
-          timestamp: data.timestamp,
-        },
-      ]);
-    });
-
-    // Yazıyor göstergesi
-    socket.on('typing:active', (data) => {
-      setTypingUsers((prev) => {
-        if (!prev.includes(data.username)) {
-          return [...prev, data.username];
-        }
-        return prev;
-      });
-    });
-
-    socket.on('typing:inactive', (data) => {
-      setTypingUsers((prev) => prev.filter((u) => u !== data.username));
-    });
-
-    // Temizlik
-    return () => {
-      socket.off('message:receive');
-      socket.off('user:joined');
-      socket.off('user:left');
-      socket.off('typing:active');
-      socket.off('typing:inactive');
     };
-  }, [socket, currentChannel]); // currentChannel değiştiğinde listener güncellensin
+
+    const handleUpdate = (updatedMessage) => {
+      setMessages(prev => prev.map(m => m.id === updatedMessage.id ? updatedMessage : m));
+    };
+
+    const handleDelete = ({ messageId }) => {
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+      toast('Message deleted', { icon: '🗑️' });
+    };
+
+    const handleTypingActive = (data) => {
+      if (data.channelId === currentChannel?.id && data.username !== user.username) {
+        setTypingUsers(prev => [...new Set([...prev, data.username])]);
+      }
+    };
+
+    const handleTypingInactive = (data) => {
+        setTypingUsers(prev => prev.filter(u => u !== data.username));
+    };
+
+    socket.on('message:receive', handleReceive);
+    socket.on('message:update', handleUpdate);
+    socket.on('message:delete', handleDelete);
+    socket.on('typing:active', handleTypingActive);
+    socket.on('typing:inactive', handleTypingInactive);
+
+    return () => {
+      socket.off('message:receive', handleReceive);
+      socket.off('message:update', handleUpdate);
+      socket.off('message:delete', handleDelete);
+      socket.off('typing:active', handleTypingActive);
+      socket.off('typing:inactive', handleTypingInactive);
+    };
+  }, [socket, currentChannel, user]);
 
   const handleSendMessage = (content) => {
     if (!socket || !content.trim()) return;
-
-    socket.emit('message:send', {
-      content: content.trim(),
-      channelId: currentChannel.id,
-    });
+    socket.emit('message:send', { content: content.trim(), channelId: currentChannel.id });
   };
 
   const handleTyping = (isTyping) => {
     if (!socket) return;
-
-    if (isTyping) {
-      socket.emit('typing:start', {
-        channelId: currentChannel.id,
-      });
-    } else {
-      socket.emit('typing:stop', {
-        channelId: currentChannel.id,
-      });
-    }
+    socket.emit(isTyping ? 'typing:start' : 'typing:stop', { channelId: currentChannel.id });
   };
 
-  // Kanal seçili değilse
-  if (!currentChannel) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-gray-700 text-gray-400">
-        <p>Select a channel to start chatting</p>
-      </div>
-    );
-  }
+  if (!currentChannel) return null;
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-700">
-      {/* Channel Header */}
-      <div className="h-12 px-4 flex items-center shadow-md border-b border-gray-800">
+    <div className="flex-1 flex flex-col bg-gray-700 min-h-0">
+      <div className="h-12 px-4 flex items-center shadow-md border-b border-gray-800 shrink-0">
         <Hash className="w-6 h-6 text-gray-400 mr-2" />
         <h2 className="font-semibold text-white">{currentChannel.name}</h2>
       </div>
 
-      {/* Messages */}
-      <MessageList messages={messages} currentUser={user.username} />
-
-      {/* Typing Indicator */}
-      {typingUsers.length > 0 && (
-        <div className="px-4 pb-2">
-          <TypingIndicator users={typingUsers} />
-        </div>
-      )}
-
-      {/* Message Input */}
-      <MessageInput
-        channelName={currentChannel.name}
-        onSend={handleSendMessage}
-        onTyping={handleTyping}
+      <MessageList 
+        messages={messages} 
+        currentUser={user}
+        onLoadMore={loadMoreMessages}
+        hasMore={hasMore}
       />
+
+      <div className="shrink-0">
+        {typingUsers.length > 0 && (
+          <div className="px-4 pb-2">
+            <TypingIndicator users={typingUsers} />
+          </div>
+        )}
+        <MessageInput
+          channelName={currentChannel.name}
+          onSend={handleSendMessage}
+          onTyping={handleTyping}
+        />
+      </div>
     </div>
   );
 }

@@ -1,30 +1,15 @@
-﻿// frontend/src/services/api.js
-const API_URL = 'http://localhost:3001/api';
+﻿const API_URL = 'http://localhost:3001/api';
 
-// Generic fetch wrapper
 async function request(endpoint, options = {}) {
-  // Login formunda 'chat_token' olarak kaydedildiği için buradan da öyle okuyoruz
   const token = localStorage.getItem('chat_token');
-  
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
+  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Request failed');
   }
-
   return response.json();
 }
 
@@ -36,47 +21,27 @@ export const verifyToken = () => request('/auth/verify');
 // Servers
 export const fetchServers = () => request('/servers');
 export const fetchServerById = (id) => request(`/servers/${id}`);
-export const createServer = (name, creatorId) => request('/servers', { method: 'POST', body: JSON.stringify({ name, creatorId }) });
+export const createServer = (name) => request('/servers', { method: 'POST', body: JSON.stringify({ name }) });
 export const deleteServer = (id) => request(`/servers/${id}`, { method: 'DELETE' });
 
-// Channels
+// Channels & Messages (UPDATED)
 export const fetchChannels = (serverId) => request(`/channels?serverId=${serverId}`);
-export const fetchChannelById = (id) => request(`/channels/${id}`);
-// YENİ EKLENEN FONKSİYON:
-export const fetchChannelMessages = (channelId) => request(`/channels/${channelId}/messages`);
-export const createChannel = (serverId, name, type = 'text') => request('/channels', { method: 'POST', body: JSON.stringify({ serverId, name, type }) });
+export const fetchChannelMessages = (channelId, before = null) => {
+  const query = before ? `?before=${before}&limit=50` : '?limit=50';
+  return request(`/channels/${channelId}/messages${query}`);
+};
+export const createChannel = (serverId, name, type) => request('/channels', { method: 'POST', body: JSON.stringify({ serverId, name, type }) });
 export const deleteChannel = (id) => request(`/channels/${id}`, { method: 'DELETE' });
 
-// Users
+// Users & Friends
 export const fetchUsers = () => request('/users');
-
-// Friends
 export const fetchFriends = (userId) => request(`/friends/${userId}`);
 export const fetchPendingRequests = (userId) => request(`/friends/${userId}/pending`);
-
-export const sendFriendRequest = (fromUserId, targetUsername) => 
-  request('/friends/request', { 
-    method: 'POST', 
-    body: JSON.stringify({ fromUserId, targetUsername }) 
-  });
-
-export const acceptFriendRequest = (requestId) => 
-  request('/friends/accept', { 
-    method: 'POST', 
-    body: JSON.stringify({ requestId }) 
-  });
-
-export const rejectFriendRequest = (requestId) => 
-  request('/friends/reject', { 
-    method: 'POST', 
-    body: JSON.stringify({ requestId }) 
-  });
+export const sendFriendRequest = (fromUserId, targetUsername) => request('/friends/request', { method: 'POST', body: JSON.stringify({ fromUserId, targetUsername }) });
+export const acceptFriendRequest = (requestId) => request('/friends/accept', { method: 'POST', body: JSON.stringify({ requestId }) });
+export const rejectFriendRequest = (requestId) => request('/friends/reject', { method: 'POST', body: JSON.stringify({ requestId }) });
 
 // DM
 export const fetchDMConversations = (userId) => request(`/dm/${userId}`);
 export const fetchDMMessages = (conversationId) => request(`/dm/messages/${conversationId}`);
-export const createDMConversation = (userId1, userId2) => 
-  request('/dm/create', { 
-    method: 'POST', 
-    body: JSON.stringify({ userId1, userId2 }) 
-  });
+export const createDMConversation = (userId1, userId2) => request('/dm/create', { method: 'POST', body: JSON.stringify({ userId1, userId2 }) });
