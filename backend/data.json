@@ -1,0 +1,61 @@
+{
+  "users": [],
+  "servers": [
+    {
+      "id": "default-server",
+      "name": "General Server",
+      "icon": null,
+      "creatorId": "system",
+      "inviteCode": "PUBLIC",
+      "members": [],
+      "channels": [
+        "general",
+        "voice-general"
+      ]
+    },
+    {
+      "id": "86a77d48-fb87-4a54-8707-dab662b607a4",
+      "name": "wdfwdf",
+      "icon": null,
+      "creatorId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
+      "inviteCode": "1ISF4W",
+      "members": [
+        "7e9e10be-affa-4ed3-a3ef-3bdd7496554f"
+      ],
+      "channels": [
+        "ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae",
+        "c42b0e65-144b-4a4e-a033-dd747506ef08"
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "id": "general",
+      "serverId": "default-server",
+      "name": "general",
+      "type": "text"
+    },
+    {
+      "id": "voice-general",
+      "serverId": "default-server",
+      "name": "Lounge",
+      "type": "voice"
+    },
+    {
+      "id": "ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae",
+      "serverId": "86a77d48-fb87-4a54-8707-dab662b607a4",
+      "name": "general",
+      "type": "text"
+    },
+    {
+      "id": "c42b0e65-144b-4a4e-a033-dd747506ef08",
+      "serverId": "86a77d48-fb87-4a54-8707-dab662b607a4",
+      "name": "Lounge",
+      "type": "voice"
+    }
+  ],
+  "friendRequests": [],
+  "dmConversations": [],
+  "messages": "[]",
+  "friends": "[]"
+}
