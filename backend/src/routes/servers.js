@@ -2,10 +2,22 @@
 const router = express.Router();
 const storage = require('../storage/inMemory');
 
-// GET /api/servers - Tüm sunucuları getir (Basitleştirilmiş, normalde user'ınkiler olmalı)
+// GÜNCELLENDİ: Sadece kullanıcının üye olduğu sunucuları getir
 router.get('/', (req, res) => {
-  const servers = storage.getAllServers();
-  res.json(servers);
+  const { userId } = req.query; // Frontend'den gelen userId
+  
+  const allServers = storage.getAllServers();
+
+  if (userId) {
+    // Sadece kullanıcının üye olduğu sunucuları filtrele
+    const userServers = allServers.filter(server => 
+      server.members && server.members.includes(userId)
+    );
+    return res.json(userServers);
+  }
+
+  // userId yoksa boş liste veya hepsi (güvenlik için boş dönmek daha iyi)
+  res.json([]);
 });
 
 // GET /api/servers/:id
@@ -29,7 +41,7 @@ router.post('/', (req, res) => {
   res.status(201).json(server);
 });
 
-// YENİ: POST /api/servers/join - Davet kodu ile katıl
+// POST /api/servers/join
 router.post('/join', (req, res) => {
   const { inviteCode, userId } = req.body;
 
@@ -37,21 +49,17 @@ router.post('/join', (req, res) => {
     return res.status(400).json({ error: 'Invite code and userId required' });
   }
 
-  // 1. Kodu bul
   const server = storage.getServerByInviteCode(inviteCode);
   
   if (!server) {
     return res.status(404).json({ error: 'Invalid invite code' });
   }
 
-  // 2. Üye zaten var mı?
   if (server.members && server.members.includes(userId)) {
     return res.status(400).json({ error: 'You are already a member of this server' });
   }
 
-  // 3. Ekle
   storage.addMemberToServer(server.id, userId);
-
   res.json(server);
 });
 
