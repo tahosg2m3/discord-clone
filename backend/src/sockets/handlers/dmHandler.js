@@ -1,43 +1,47 @@
-// backend/src/sockets/handlers/dmHandler.js
-const { v4: uuidv4 } = require('uuid');
 const storage = require('../../storage/inMemory');
+const { v4: uuidv4 } = require('uuid');
 
 exports.handleSendDM = (io, socket, data) => {
-  const { conversationId, content } = data;
+  const { receiverId, content } = data;
+  const senderId = socket.userData.userId;
 
-  if (!content || !content.trim()) {
-    socket.emit('error', { message: 'Message content required' });
-    return;
-  }
+  if (!content || !receiverId || !senderId) return;
 
-  if (!socket.userData.username) {
-    socket.emit('error', { message: 'User not authenticated' });
-    return;
-  }
+  // 1. Konuşmayı bul veya oluştur
+  const conversation = storage.getOrCreateDMConversation(senderId, receiverId);
 
+  // 2. Mesaj objesi oluştur
   const message = {
     id: uuidv4(),
-    conversationId,
-    senderId: socket.userData.userId,
-    username: socket.userData.username,
-    content: content.trim(),
+    conversationId: conversation.id,
+    senderId,
+    content,
     timestamp: Date.now(),
-    type: 'user',
+    type: 'text'
   };
 
-  storage.addDMMessage(conversationId, message);
+  // 3. Mesajı kaydet
+  storage.addDMMessage(conversation.id, message);
 
-  // Get conversation to find other user
-  const conversation = storage.dmConversations.find(c => c.id === conversationId);
-  if (conversation) {
-    const otherUserId = conversation.user1Id === socket.userData.userId 
-      ? conversation.user2Id 
-      : conversation.user1Id;
+  // 4. Mesajı GÖNDER (Her iki tarafa da)
+  // Alıcıya gönder
+  io.to(`user:${receiverId}`).emit('dm:receive', {
+    conversationId: conversation.id,
+    message
+  });
 
-    // Send to both users
-    io.to(`user:${socket.userData.userId}`).emit('dm:receive', message);
-    io.to(`user:${otherUserId}`).emit('dm:receive', message);
-  }
-
-  console.log(`💬 DM from ${socket.userData.username}: ${content.substring(0, 50)}...`);
+  // Gönderene de gönder (Ekranda görünmesi için)
+  socket.emit('dm:receive', {
+    conversationId: conversation.id,
+    message
+  });
+  
+  // Ayrıca konuşma listesinin güncellenmesi için event atabiliriz
+  const conversationUpdate = {
+     ...conversation,
+     lastMessageAt: message.timestamp,
+     otherUser: storage.getUserById(senderId) // Alıcı için 'diğer kişi' gönderendir
+  };
+  
+  io.to(`user:${receiverId}`).emit('dm:conversation-update', conversationUpdate);
 };

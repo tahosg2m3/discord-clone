@@ -18,12 +18,16 @@ export const loginUser = (data) => request('/auth/login', { method: 'POST', body
 export const registerUser = (data) => request('/auth/register', { method: 'POST', body: JSON.stringify(data) });
 export const verifyToken = () => request('/auth/verify');
 
-// Servers - GÜNCELLENDİ: userId parametresi alıyor
+// Servers
 export const fetchServers = (userId) => request(`/servers?userId=${userId}`);
 export const fetchServerById = (id) => request(`/servers/${id}`);
 export const createServer = (name, creatorId) => request('/servers', { method: 'POST', body: JSON.stringify({ name, creatorId }) });
 export const deleteServer = (id) => request(`/servers/${id}`, { method: 'DELETE' });
 export const joinServer = (inviteCode, userId) => request('/servers/join', { method: 'POST', body: JSON.stringify({ inviteCode, userId }) });
+
+// YENİLER:
+export const leaveServer = (serverId, userId) => request(`/servers/${serverId}/leave`, { method: 'POST', body: JSON.stringify({ userId }) });
+export const fetchServerMembers = (serverId) => request(`/servers/${serverId}/members`);
 
 // Channels & Messages
 export const fetchChannels = (serverId) => request(`/channels?serverId=${serverId}`);
