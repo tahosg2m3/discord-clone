@@ -1,4 +1,18 @@
-﻿# Discord Clone - Full Stack Chat Application
+﻿⚖️ Legal Disclaimer
+THIS PROJECT IS FOR EDUCATIONAL AND PORTFOLIO PURPOSES ONLY.
+
+No Warranty: This software and all associated files are provided "AS IS" without any warranty or guarantee of any kind, express or implied. The developers do not guarantee that the software will be error-free or uninterrupted.
+
+Limitation of Liability: In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use of the software. You use this software entirely at your own risk.
+
+Intellectual Property: "Discord" is a trademark of Discord Inc. This project is a non-commercial clone and is not affiliated with, endorsed by, or sponsored by Discord Inc. All visual assets, branding, and logos inspired by Discord belong to their respective owners.
+
+No Support: Downloading or forking this repository does not include any obligation for the developers to provide support, updates, or maintenance.
+
+BY USING OR DOWNLOADING THIS SOFTWARE, YOU AGREE TO THESE TERMS. IF YOU DO NOT AGREE, DO NOT USE THIS SOFTWARE.
+
+
+# Discord Clone - Full Stack Chat Application
 <p align="right">
 🌍 Language:
 <a href="README.md">English</a> |
