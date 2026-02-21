@@ -1,35 +1,28 @@
-// backend/src/routes/dm.js
 const express = require('express');
 const router = express.Router();
 const storage = require('../storage/inMemory');
+const { messageService } = require('../services/messageService'); 
 
-// Get user's DM conversations
 router.get('/:userId', (req, res) => {
-  const { userId } = req.params;
-  const conversations = storage.getUserDMConversations(userId);
-  res.json(conversations);
+  const convs = storage.getUserDMConversations(req.params.userId);
+  res.json(convs);
 });
 
-// Get or create DM conversation
 router.post('/create', (req, res) => {
   const { userId1, userId2 } = req.body;
-  
-  if (!userId1 || !userId2) {
-    return res.status(400).json({ error: 'Both user IDs required' });
-  }
-
-  if (userId1 === userId2) {
-    return res.status(400).json({ error: 'Cannot DM yourself' });
-  }
-
-  const conversation = storage.getOrCreateDMConversation(userId1, userId2);
-  res.json(conversation);
+  const conv = storage.getOrCreateDMConversation(userId1, userId2);
+  res.json(conv);
 });
 
-// Get DM messages
+// Artık DM mesajları için sunucu kanalının veritabanına bakılıyor
 router.get('/messages/:conversationId', (req, res) => {
-  const { conversationId } = req.params;
-  const messages = storage.getDMMessages(conversationId);
+  // conversationId burada aslında gizli DM sunucusunun (dmServer.id) ID'sidir
+  const channel = storage.channels.find(c => c.serverId === req.params.conversationId);
+  
+  if (!channel) return res.json([]);
+  
+  const before = req.query.before;
+  const messages = messageService.getChannelMessages(channel.id, 50, before);
   res.json(messages);
 });
 

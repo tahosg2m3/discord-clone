@@ -1,118 +1,130 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useDM } from '../../context/DMContext';
-import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { fetchDMMessages } from '../../services/api';
-import MessageList from '../chat/MessageList';
+import Message from '../chat/Message'; 
 import MessageInput from '../chat/MessageInput';
-import toast from 'react-hot-toast';
+import { getColorForString } from '../../utils/colors';
 
 export default function DMArea() {
-  const { currentConversation } = useDM();
-  const { socket } = useSocket();
+  const { activeDM } = useDM();
   const { user } = useAuth();
-  
+  const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef(null);
 
-  // 1. Konuşma değiştiğinde API'den eski mesajları çek
   useEffect(() => {
-    if (!currentConversation) return;
+    if (activeDM) {
+      fetchDMMessages(activeDM.id).then(setMessages).catch(console.error);
+    } else {
+      setMessages([]);
+    }
+  }, [activeDM]);
 
-    const loadMessages = async () => {
-      setLoading(true);
-      try {
-        const data = await fetchDMMessages(currentConversation.id);
-        setMessages(data);
-      } catch (error) {
-        console.error('Mesajlar yüklenemedi:', error);
-        toast.error('Mesaj geçmişi alınamadı');
-      } finally {
-        setLoading(false);
+  useEffect(() => {
+    if (!socket || !activeDM) return;
+    
+    const handleReceive = (message) => {
+      if (message.channelId === activeDM.channelId) {
+        setMessages(prev => [...prev, message]);
       }
     };
-
-    loadMessages();
-  }, [currentConversation]);
-
-  // 2. Canlı Mesajları Dinle
-  useEffect(() => {
-    if (!socket || !currentConversation) return;
-
-    const handleReceive = (data) => {
-      // DİKKAT: Backend { conversationId, message } gönderiyor.
-      // Sadece açık olan pencerenin mesajıysa ekliyoruz.
-      if (data.conversationId === currentConversation.id) {
-        setMessages(prev => [...prev, data.message]);
-      }
+    
+    const handleUpdate = (updatedMessage) => {
+      setMessages(prev => prev.map(m => m.id === updatedMessage.id ? updatedMessage : m));
+    };
+    
+    const handleDelete = ({ messageId }) => {
+      setMessages(prev => prev.filter(m => m.id !== messageId));
     };
 
-    socket.on('dm:receive', handleReceive);
+    socket.on('message:receive', handleReceive);
+    socket.on('message:update', handleUpdate);
+    socket.on('message:delete', handleDelete);
 
     return () => {
-      socket.off('dm:receive', handleReceive);
+      socket.off('message:receive', handleReceive);
+      socket.off('message:update', handleUpdate);
+      socket.off('message:delete', handleDelete);
     };
-  }, [socket, currentConversation]);
+  }, [socket, activeDM]);
 
-  // 3. Mesaj Gönderme
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
   const handleSendMessage = (content) => {
-    if (!socket || !content.trim() || !currentConversation) return;
-
-    // Alıcı ID'sini hesapla
-    const receiverId = currentConversation.otherUser?.id || 
-      (currentConversation.user1Id === user.id ? currentConversation.user2Id : currentConversation.user1Id);
-
-    if (!receiverId) {
-      toast.error('Alıcı bulunamadı!');
-      return;
-    }
-
-    socket.emit('dm:send', {
-      receiverId, // Backend bunu bekliyor
-      content: content.trim()
-    });
+    if (!content.trim() || !activeDM || !socket) return;
+    socket.emit('message:send', { channelId: activeDM.channelId, content });
   };
 
-  if (!currentConversation) {
+  if (!activeDM) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-500 bg-gray-700">
-        <p>Sohbet etmek için soldan bir kişi seçin.</p>
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#313338] text-[#949BA4] select-none">
+        <div className="w-20 h-20 bg-[#2B2D31] rounded-full flex items-center justify-center mb-6 shadow-inner">
+          <span className="text-4xl text-[#404249]">@</span>
+        </div>
+        <h3 className="text-xl font-bold text-[#F2F3F5] mb-2">Arkadaşlarınla Mesajlaş</h3>
+        <p className="text-[15px]">Bir sohbet başlatmak için sol taraftan birini seç.</p>
       </div>
     );
   }
 
-  const otherUser = currentConversation.otherUser || { username: 'Kullanıcı' };
+  const avatarColor = getColorForString(activeDM.otherUser.username);
+  const initial = activeDM.otherUser.username[0].toUpperCase();
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-700 min-h-0">
-      {/* Başlık */}
-      <div className="h-12 px-4 flex items-center shadow-md border-b border-gray-800 shrink-0 bg-gray-750">
-        <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center mr-3">
-            <span className="text-white font-semibold">@</span>
+    <div className="flex-1 flex flex-col bg-[#313338] min-w-0 h-full">
+      {/* Üst Bar */}
+      <div className="h-12 px-4 flex items-center shadow-sm border-b border-[#1E1F22] shrink-0 bg-[#313338] z-10">
+        <div className="flex items-center space-x-3">
+          <span className="text-[#949BA4] text-xl font-medium select-none">@</span>
+          <span className="font-bold text-[#F2F3F5]">{activeDM.otherUser.username}</span>
+          {activeDM.otherUser.status === 'online' && (
+            <div className="w-2.5 h-2.5 bg-[#23A559] rounded-full"></div>
+          )}
         </div>
-        <h2 className="font-semibold text-white">
-          {otherUser.username}
-        </h2>
       </div>
 
-      {/* Mesaj Listesi */}
-      {loading ? (
-        <div className="flex-1 flex items-center justify-center">
-            <span className="text-gray-400">Yükleniyor...</span>
+      {/* Mesajlar */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+        {/* Karşılama Banner'ı */}
+        <div className="mt-8 mb-6 pb-4 border-b border-[#2B2D31]">
+          {activeDM.otherUser.avatar && !activeDM.otherUser.avatar.includes('ui-avatars.com') ? (
+            <img src={activeDM.otherUser.avatar} className="w-20 h-20 rounded-full object-cover mb-4" alt="" />
+          ) : (
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-3xl font-bold mb-4" style={{ backgroundColor: avatarColor }}>
+              {initial}
+            </div>
+          )}
+          <h1 className="text-3xl font-bold text-[#F2F3F5] mb-2">{activeDM.otherUser.username}</h1>
+          <p className="text-[#949BA4] text-[15px]">Bu, <strong>{activeDM.otherUser.username}</strong> ile olan mesaj geçmişinin başlangıcıdır.</p>
         </div>
-      ) : (
-        <MessageList 
-          messages={messages} 
-          currentUser={user} // 'user' objesini tam gönderiyoruz
-        />
-      )}
 
-      {/* Input */}
-      <div className="shrink-0 p-4">
-        <MessageInput
-          channelName={otherUser.username}
-          onSend={handleSendMessage}
-          onTyping={() => {}}
+        {messages.map((msg, index) => {
+          const isOwn = msg.userId === user.id;
+          const prevMsg = index > 0 ? messages[index - 1] : null;
+          const grouped = prevMsg && prevMsg.userId === msg.userId && (msg.timestamp - prevMsg.timestamp < 300000);
+          
+          return (
+            <Message 
+              key={msg.id} 
+              message={msg} 
+              isOwn={isOwn} 
+              grouped={grouped} 
+              userId={user.id} 
+            />
+          );
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Mesaj Gönderme Kutusu */}
+      <div className="p-4 shrink-0">
+        <MessageInput 
+          onSendMessage={handleSendMessage} 
+          placeholder={`@${activeDM.otherUser.username} kişisine mesaj gönder`} 
         />
       </div>
     </div>

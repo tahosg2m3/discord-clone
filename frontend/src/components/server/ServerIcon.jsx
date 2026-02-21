@@ -2,46 +2,22 @@
 
 export default function ServerIcon({ server, active, onClick }) {
   const color = getColorForString(server.name);
-  const initials = server.name
-    .split(' ')
-    .map(word => word[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = server.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
 
   return (
-    <div className="relative group">
-      {/* Active Indicator */}
-      {active && (
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 bg-white rounded-r-full" />
-      )}
-
-      {/* Server Circle */}
+    <div className="relative group flex items-center justify-center w-[72px] h-[48px] mb-2 cursor-pointer">
+      <div className={`absolute left-0 w-1 bg-white rounded-r-md transition-all duration-300 ease-in-out ${active ? 'h-10 opacity-100' : 'h-2 opacity-0 group-hover:h-5 group-hover:opacity-100'}`} />
+      
       <button
         onClick={onClick}
-        className={`
-          w-12 h-12 flex items-center justify-center
-          transition-all duration-200
-          ${active 
-            ? 'rounded-2xl' 
-            : 'rounded-full hover:rounded-2xl'
-          }
-        `}
-        style={{ backgroundColor: color }}
+        className={`w-[48px] h-[48px] flex items-center justify-center overflow-hidden transition-all duration-300 ease-in-out text-white font-medium text-[15px] ${active ? 'rounded-[16px] shadow-sm' : 'rounded-[24px] hover:rounded-[16px] hover:shadow-sm'}`}
+        style={{ backgroundColor: active ? '#5865F2' : color }}
       >
-        {server.icon ? (
-          server.icon
-        ) : (
-          <span className="text-white font-semibold text-sm">
-            {initials}
-          </span>
-        )}
+        {server.icon ? <img src={server.icon} alt={server.name} className="w-full h-full object-cover" /> : <span>{initials}</span>}
       </button>
 
-      {/* Tooltip */}
-      <div className="absolute left-full ml-2 px-3 py-2 bg-gray-950 text-white 
-                      text-sm font-medium rounded opacity-0 group-hover:opacity-100 
-                      pointer-events-none whitespace-nowrap z-50 transition-opacity">
+      <div className="absolute left-[76px] px-3 py-2 bg-[#111214] text-[#DBDEE1] text-[14px] font-semibold rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-all duration-150 scale-95 group-hover:scale-100 shadow-xl flex items-center">
+        <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-[#111214] rotate-45" />
         {server.name}
       </div>
     </div>
