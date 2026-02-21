@@ -2,54 +2,42 @@
 const fs = require('fs');
 const path = require('path');
 
-// Verilerin kaydedileceği dosya
 const DATA_FILE = path.join(__dirname, '../../data.json');
 
 class InMemoryStorage {
   constructor() {
-    // --- Array Yapıları (Listeler) ---
     this.servers = [];
     this.channels = [];
     this.users = [];
-    this.dmConversations = [];
     this.friendRequests = [];
     this.friendships = [];
     
-    // --- Map Yapıları (Anahtar-Değer) ---
-    // Bunların özel olarak kaydedilip yüklenmesi gerekir
-    this.dmMessages = new Map();      // conversationId -> [mesajlar]
-    this.channelMessages = new Map(); // channelId -> [mesajlar] (YENİ)
-    this.userStatuses = new Map();    // userId -> durumu
-    this.serverMembers = new Map();   // serverId -> [üye id'leri]
+    this.channelMessages = new Map(); 
+    this.userStatuses = new Map();    
+    this.serverMembers = new Map();   
 
-    // Başlangıçta verileri yükle
     this.loadData();
   }
 
-  // ==================== DOSYA SİSTEMİ (KALICILIK) ====================
   loadData() {
     try {
       if (fs.existsSync(DATA_FILE)) {
         const rawData = fs.readFileSync(DATA_FILE, 'utf8');
         const data = JSON.parse(rawData);
         
-        // Listeleri yükle
         this.servers = data.servers || [];
         this.channels = data.channels || [];
         this.users = data.users || [];
-        this.dmConversations = data.dmConversations || [];
         this.friendRequests = data.friendRequests || [];
         this.friendships = data.friendships || [];
         
-        // Map'leri geri yükle (JSON'dan Map'e çevir)
-        this.dmMessages = new Map(JSON.parse(data.dmMessages || '[]'));
         this.channelMessages = new Map(JSON.parse(data.channelMessages || '[]'));
         this.userStatuses = new Map(JSON.parse(data.userStatuses || '[]'));
         this.serverMembers = new Map(JSON.parse(data.serverMembers || '[]'));
         
-        console.log('📦 Veriler data.json dosyasından başarıyla yüklendi.');
+        console.log('📦 Veriler data.json dosyasından yüklendi.');
       } else {
-        console.log('✨ Kayıt dosyası yok. Varsayılan veriler oluşturuluyor.');
+        console.log('✨ Kayıt dosyası yok. Varsayılanlar oluşturuluyor.');
         this.seedData();
       }
     } catch (error) {
@@ -64,11 +52,8 @@ class InMemoryStorage {
         servers: this.servers,
         channels: this.channels,
         users: this.users,
-        dmConversations: this.dmConversations,
         friendRequests: this.friendRequests,
         friendships: this.friendships,
-        // Map'leri array formatına çevirip kaydet
-        dmMessages: JSON.stringify(Array.from(this.dmMessages.entries())),
         channelMessages: JSON.stringify(Array.from(this.channelMessages.entries())),
         userStatuses: JSON.stringify(Array.from(this.userStatuses.entries())),
         serverMembers: JSON.stringify(Array.from(this.serverMembers.entries())),
@@ -81,17 +66,16 @@ class InMemoryStorage {
   }
 
   seedData() {
-    // Varsayılan Sunucu
     const defaultServer = {
       id: 'default-server',
       name: 'General Server',
       creatorId: 'system',
       inviteCode: 'PUBLIC',
       createdAt: Date.now(),
+      isDM: false
     };
     this.servers.push(defaultServer);
 
-    // Varsayılan Kanallar
     const defaultChannels = [
       { id: uuidv4(), name: 'general', serverId: defaultServer.id, type: 'text', createdAt: Date.now() },
       { id: uuidv4(), name: 'voice-chat', serverId: defaultServer.id, type: 'voice', createdAt: Date.now() },
@@ -99,22 +83,13 @@ class InMemoryStorage {
 
     this.channels.push(...defaultChannels);
     this.serverMembers.set(defaultServer.id, []); 
-    
     this.saveData();
   }
 
-  // ==================== SERVERS & MEMBERSHIP ====================
-  getAllServers() {
-    return [...this.servers];
-  }
-
-  getServerById(id) {
-    return this.servers.find(s => s.id === id);
-  }
-  
-  getServerByInviteCode(inviteCode) {
-    return this.servers.find(s => s.inviteCode === inviteCode);
-  }
+  // --- SERVERS ---
+  getAllServers() { return [...this.servers]; }
+  getServerById(id) { return this.servers.find(s => s.id === id); }
+  getServerByInviteCode(code) { return this.servers.find(s => s.inviteCode === code); }
 
   createServer(name, creatorId) {
     const server = {
@@ -123,14 +98,24 @@ class InMemoryStorage {
       creatorId,
       inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
       createdAt: Date.now(),
+      isDM: false
     };
     this.servers.push(server);
-    
     this.createChannel(server.id, 'general', 'text');
-    this.addServerMember(server.id, creatorId); // Kurucuyu ekle ve kaydet
-    
+    this.addServerMember(server.id, creatorId);
     this.saveData();
     return server;
+  }
+
+  updateServer(id, updates) {
+    const server = this.getServerById(id);
+    if (server) {
+      if (updates.name) server.name = updates.name;
+      if (updates.icon !== undefined) server.icon = updates.icon;
+      this.saveData();
+      return server;
+    }
+    return null;
   }
 
   deleteServer(id) {
@@ -145,14 +130,9 @@ class InMemoryStorage {
     return false;
   }
 
-  // Üye Ekleme (Bu kısım sunucuların listede kalmasını sağlar)
   addServerMember(serverId, userId) {
-    if (!this.serverMembers.has(serverId)) {
-      this.serverMembers.set(serverId, []);
-    }
+    if (!this.serverMembers.has(serverId)) this.serverMembers.set(serverId, []);
     const members = this.serverMembers.get(serverId);
-    
-    // Eğer üye zaten yoksa ekle ve KAYDET
     if (!members.includes(userId)) {
       members.push(userId);
       this.saveData();
@@ -175,23 +155,12 @@ class InMemoryStorage {
     return memberIds.map(id => this.getUserById(id)).filter(Boolean);
   }
 
-  // ==================== CHANNELS & MESSAGES ====================
-  getChannelsByServerId(serverId) {
-    return this.channels.filter(c => c.serverId === serverId);
-  }
-
-  getChannelById(id) {
-    return this.channels.find(c => c.id === id);
-  }
+  // --- CHANNELS ---
+  getChannelsByServerId(serverId) { return this.channels.filter(c => c.serverId === serverId); }
+  getChannelById(id) { return this.channels.find(c => c.id === id); }
 
   createChannel(serverId, name, type = 'text') {
-    const channel = {
-      id: uuidv4(),
-      serverId,
-      name,
-      type,
-      createdAt: Date.now(),
-    };
+    const channel = { id: uuidv4(), serverId, name, type, createdAt: Date.now() };
     this.channels.push(channel);
     this.saveData();
     return channel;
@@ -207,274 +176,182 @@ class InMemoryStorage {
     return false;
   }
 
-  // Kanal Mesajlarını Kaydet
   addChannelMessage(channelId, message) {
-    if (!this.channelMessages.has(channelId)) {
-      this.channelMessages.set(channelId, []);
-    }
-    this.channelMessages.get(channelId).push(message);
-    
-    // Son 500 mesajı tut
+    if (!this.channelMessages.has(channelId)) this.channelMessages.set(channelId, []);
     const msgs = this.channelMessages.get(channelId);
-    if (msgs.length > 500) {
-       this.channelMessages.set(channelId, msgs.slice(-500));
-    }
-    
-    this.saveData(); // Mesajı diske yaz
+    msgs.push(message);
+    if (msgs.length > 500) this.channelMessages.set(channelId, msgs.slice(-500));
+    this.saveData();
   }
 
-  getChannelMessages(channelId) {
-    return this.channelMessages.get(channelId) || [];
-  }
+  getChannelMessages(channelId) { return this.channelMessages.get(channelId) || []; }
 
   updateChannelMessage(channelId, messageId, newContent) {
-    const messages = this.getChannelMessages(channelId);
-    const msg = messages.find(m => m.id === messageId);
+    const msgs = this.getChannelMessages(channelId);
+    const msg = msgs.find(m => m.id === messageId);
     if (msg) {
-        msg.content = newContent;
-        msg.isEdited = true;
-        this.saveData();
-        return msg;
+      msg.content = newContent;
+      msg.isEdited = true;
+      this.saveData();
+      return msg;
     }
     return null;
   }
 
   deleteChannelMessage(channelId, messageId) {
-    const messages = this.getChannelMessages(channelId);
-    const index = messages.findIndex(m => m.id === messageId);
+    const msgs = this.getChannelMessages(channelId);
+    const index = msgs.findIndex(m => m.id === messageId);
     if (index !== -1) {
-        messages.splice(index, 1);
-        this.saveData();
-        return true;
+      msgs.splice(index, 1);
+      this.saveData();
+      return true;
     }
     return false;
   }
 
-  // ==================== USERS & AUTH ====================
+  // --- USERS ---
   createUser(username) {
-    const user = {
-      id: uuidv4(),
-      username,
-      createdAt: Date.now(),
-    };
+    const user = { id: uuidv4(), username, createdAt: Date.now() };
     this.users.push(user);
     this.saveData();
     return user;
   }
 
   createUserWithAuth({ username, email, password }) {
-    if (this.getUserByUsername(username)) {
-      throw new Error('Username already taken');
-    }
-    if (this.getUserByEmail(email)) {
-      throw new Error('Email already registered');
-    }
-
-    const user = {
-      id: uuidv4(),
-      username,
-      email,
-      password,
-      avatar: `https://ui-avatars.com/api/?name=${username}&background=random`,
-      status: 'online',
-      createdAt: Date.now(),
+    if (this.getUserByUsername(username)) throw new Error('Username taken');
+    if (this.getUserByEmail(email)) throw new Error('Email taken');
+    const user = { 
+      id: uuidv4(), 
+      username, 
+      email, 
+      password, 
+      avatar: `https://ui-avatars.com/api/?name=${username}&background=random`, 
+      status: 'online', 
+      createdAt: Date.now() 
     };
     this.users.push(user);
     this.userStatuses.set(user.id, 'online');
-
-    // Otomatik olarak varsayılan sunucuya ekle
     this.addServerMember('default-server', user.id);
-
     this.saveData();
     return user;
   }
 
-  getUserByUsername(username) {
-    if (!username) return null;
-    return this.users.find(u => u.username.toLowerCase() === username.toLowerCase());
-  }
+  getUserById(id) { return this.users.find(u => u.id === id); }
+  getUserByUsername(username) { return this.users.find(u => u.username?.toLowerCase() === username?.toLowerCase()); }
+  getUserByEmail(email) { return this.users.find(u => u.email === email); }
+  getAllUsers() { return [...this.users]; }
 
-  getUserByEmail(email) {
-    if (!email) return null;
-    return this.users.find(u => u.email === email);
-  }
-
-  getUserById(id) {
-    return this.users.find(u => u.id === id);
-  }
-
-  getAllUsers() {
-    return [...this.users];
-  }
-
-  updateUserAvatar(userId, avatarUrl) {
-    const user = this.getUserById(userId);
-    if (user) {
-      user.avatar = avatarUrl;
-      this.saveData();
-      return user;
-    }
+  updateUserAvatar(userId, url) {
+    const u = this.getUserById(userId);
+    if (u) { u.avatar = url; this.saveData(); return u; }
     return null;
   }
 
-  updateUserStatus(userId, status) {
-    this.userStatuses.set(userId, status);
-    // Status anlık olduğu için kaydetmeye gerek yok
-  }
+  updateUserStatus(id, status) { this.userStatuses.set(id, status); }
+  getUserStatus(id) { return this.userStatuses.get(id) || 'offline'; }
 
-  getUserStatus(userId) {
-    return this.userStatuses.get(userId) || 'offline';
-  }
-
-  // ==================== DM CONVERSATIONS ====================
-  getOrCreateDMConversation(userId1, userId2) {
-    const [id1, id2] = [userId1, userId2].sort();
+  // --- DM AS A SERVER (YENİ ALTYAPI) ---
+  getOrCreateDMConversation(u1, u2) {
+    const [id1, id2] = [u1, u2].sort();
     
-    let conversation = this.dmConversations.find(
-      c => (c.user1Id === id1 && c.user2Id === id2)
-    );
-
-    if (!conversation) {
-      conversation = {
-        id: uuidv4(),
-        user1Id: id1,
-        user2Id: id2,
-        createdAt: Date.now(),
+    // Zaten 2 kişi arasında DM sunucusu var mı?
+    let dmServer = this.servers.find(s => s.isDM && s.dmUserIds && s.dmUserIds.includes(id1) && s.dmUserIds.includes(id2));
+    
+    if (!dmServer) {
+      const serverId = uuidv4();
+      dmServer = { 
+        id: serverId, 
+        name: `DM-${id1}-${id2}`, 
+        isDM: true, 
+        dmUserIds: [id1, id2], 
+        createdAt: Date.now() 
       };
-      this.dmConversations.push(conversation);
-      this.dmMessages.set(conversation.id, []);
+      this.servers.push(dmServer);
+      this.serverMembers.set(serverId, [id1, id2]);
+      
+      const channel = { id: uuidv4(), serverId: serverId, name: 'dm-chat', type: 'text', createdAt: Date.now() };
+      this.channels.push(channel);
       this.saveData();
     }
 
-    return conversation;
+    const channel = this.channels.find(c => c.serverId === dmServer.id);
+    return { id: dmServer.id, channelId: channel.id, user1Id: id1, user2Id: id2 };
   }
 
-  getUserDMConversations(userId) {
-    return this.dmConversations
-      .filter(c => c.user1Id === userId || c.user2Id === userId)
-      .map(c => {
-        const otherUserId = c.user1Id === userId ? c.user2Id : c.user1Id;
-        const otherUser = this.getUserById(otherUserId);
-        return {
-          ...c,
-          otherUser,
-        };
-      });
-  }
-
-  getDMMessages(conversationId) {
-    return this.dmMessages.get(conversationId) || [];
-  }
-
-  addDMMessage(conversationId, message) {
-    if (!this.dmMessages.has(conversationId)) {
-      this.dmMessages.set(conversationId, []);
-    }
-    this.dmMessages.get(conversationId).push(message);
-    this.saveData();
-  }
-
-  // ==================== FRIENDS ====================
-  createFriendRequest(fromUserId, toUserId) {
-    const areFriends = this.friendships.some(
-      f => (f.user1Id === fromUserId && f.user2Id === toUserId) ||
-           (f.user1Id === toUserId && f.user2Id === fromUserId)
-    );
-    if (areFriends) return null;
-
-    const existingRequest = this.friendRequests.find(
-      r => (r.fromUserId === fromUserId && r.toUserId === toUserId) ||
-           (r.fromUserId === toUserId && r.toUserId === fromUserId)
-    );
-    if (existingRequest) return null;
-
-    const request = {
-      id: uuidv4(),
-      fromUserId,
-      toUserId,
-      status: 'pending',
-      createdAt: Date.now(),
-    };
+  getUserDMConversations(uid) {
+    const dmServers = this.servers.filter(s => s.isDM && s.dmUserIds && s.dmUserIds.includes(uid));
     
-    this.friendRequests.push(request);
-    this.saveData();
-    return request;
-  }
-
-  getPendingFriendRequests(userId) {
-    return this.friendRequests
-      .filter(r => r.toUserId === userId && r.status === 'pending')
-      .map(r => ({
-        ...r,
-        fromUser: this.getUserById(r.fromUserId),
-      }));
-  }
-
-  acceptFriendRequest(requestId) {
-    const request = this.friendRequests.find(r => r.id === requestId);
-    if (!request) return false;
-
-    request.status = 'accepted';
-
-    const [id1, id2] = [request.fromUserId, request.toUserId].sort();
-    this.friendships.push({
-      id: uuidv4(),
-      user1Id: id1,
-      user2Id: id2,
-      createdAt: Date.now(),
-    });
-
-    this.saveData();
-    return true;
-  }
-
-  rejectFriendRequest(requestId) {
-    const index = this.friendRequests.findIndex(r => r.id === requestId);
-    if (index === -1) return false;
-    
-    this.friendRequests.splice(index, 1);
-    this.saveData();
-    return true;
-  }
-
-  getUserFriends(userId) {
-    const friendships = this.friendships.filter(
-      f => f.user1Id === userId || f.user2Id === userId
-    );
-
-    return friendships.map(f => {
-      const friendId = f.user1Id === userId ? f.user2Id : f.user1Id;
-      const friend = this.getUserById(friendId);
-      if (!friend) return null;
-      return {
-        ...friend,
-        status: this.getUserStatus(friendId),
+    return dmServers.map(server => {
+      const otherUserId = server.dmUserIds.find(id => id !== uid);
+      const channel = this.channels.find(c => c.serverId === server.id);
+      return { 
+        id: server.id, 
+        channelId: channel?.id, 
+        user1Id: uid, 
+        user2Id: otherUserId, 
+        otherUser: this.getUserById(otherUserId) 
       };
+    }).filter(c => c.otherUser);
+  }
+
+  // --- FRIENDS ---
+  createFriendRequest(from, to) {
+    if (this.friendships.some(f => (f.user1Id===from && f.user2Id===to) || (f.user1Id===to && f.user2Id===from))) return null;
+    if (this.friendRequests.find(r => (r.fromUserId===from && r.toUserId===to) || (r.fromUserId===to && r.toUserId===from))) return null;
+    const req = { id: uuidv4(), fromUserId: from, toUserId: to, status: 'pending', createdAt: Date.now() };
+    this.friendRequests.push(req); 
+    this.saveData(); 
+    return req;
+  }
+
+  getPendingFriendRequests(uid) {
+    return this.friendRequests.filter(r => r.toUserId === uid && r.status === 'pending')
+      .map(r => ({ ...r, fromUser: this.getUserById(r.fromUserId) }));
+  }
+
+  acceptFriendRequest(rid) {
+    const req = this.friendRequests.find(r => r.id === rid);
+    if (!req) return false;
+    req.status = 'accepted';
+    const [id1, id2] = [req.fromUserId, req.toUserId].sort();
+    this.friendships.push({ id: uuidv4(), user1Id: id1, user2Id: id2, createdAt: Date.now() });
+    this.saveData(); 
+    return true;
+  }
+
+  rejectFriendRequest(rid) {
+    const idx = this.friendRequests.findIndex(r => r.id === rid);
+    if (idx !== -1) { 
+      this.friendRequests.splice(idx, 1); 
+      this.saveData(); 
+      return true; 
+    }
+    return false;
+  }
+
+  getUserFriends(uid) {
+    return this.friendships.filter(f => f.user1Id === uid || f.user2Id === uid).map(f => {
+      const fid = f.user1Id === uid ? f.user2Id : f.user1Id;
+      const u = this.getUserById(fid);
+      return u ? { ...u, status: this.getUserStatus(fid) } : null;
     }).filter(Boolean);
   }
 
-  removeFriend(userId, friendId) {
-    const [id1, id2] = [userId, friendId].sort();
-    const index = this.friendships.findIndex(
-      f => f.user1Id === id1 && f.user2Id === id2
-    );
-    
-    if (index !== -1) {
-      this.friendships.splice(index, 1);
-      this.saveData();
+  removeFriend(u1, u2) {
+    const [id1, id2] = [u1, u2].sort();
+    const idx = this.friendships.findIndex(f => f.user1Id === id1 && f.user2Id === id2);
+    if (idx !== -1) { 
+      this.friendships.splice(idx, 1); 
+      this.saveData(); 
     }
   }
 
-  // ==================== ALIASES (HATA ÖNLEYİCİ) ====================
   findUserById(id) { return this.getUserById(id); }
-  findUserByUsername(username) { return this.getUserByUsername(username); }
-  findUserByEmail(email) { return this.getUserByEmail(email); }
-  
-  getPendingRequests(userId) { return this.getPendingFriendRequests(userId); }
-  sendFriendRequest(fromId, toId) { return this.createFriendRequest(fromId, toId); }
-  
-  addMemberToServer(serverId, userId) { return this.addServerMember(serverId, userId); }
-  createDMConversation(u1, u2) { return this.getOrCreateDMConversation(u1, u2); }
+  findUserByUsername(u) { return this.getUserByUsername(u); }
+  findUserByEmail(e) { return this.getUserByEmail(e); }
+  getPendingRequests(uid) { return this.getPendingFriendRequests(uid); }
+  sendFriendRequest(f, t) { return this.createFriendRequest(f, t); }
+  addMemberToServer(sid, uid) { return this.addServerMember(sid, uid); }
 }
 
 module.exports = new InMemoryStorage();

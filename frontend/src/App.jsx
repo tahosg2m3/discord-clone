@@ -3,9 +3,9 @@ import { SocketProvider } from './context/SocketContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ServerProvider, useServer } from './context/ServerContext';
 import { VoiceProvider } from './context/VoiceContext';
-import { DMProvider, useDM } from './context/DMContext';
+import { DMProvider } from './context/DMContext';
 import { FriendsProvider } from './context/FriendsContext';
-import { Toaster } from 'react-hot-toast'; // YENİ
+import { Toaster } from 'react-hot-toast';
 
 import AuthScreen from './components/auth/AuthScreen';
 import ServerList from './components/layout/ServerList';
@@ -17,58 +17,61 @@ import DMList from './components/dm/DMList';
 import DMArea from './components/dm/DMArea';
 import FriendsList from './components/friends/FriendsList';
 
-import { Users, MessageSquare, Hash } from 'lucide-react';
-
 function AppContent() {
   const { user } = useAuth();
   const { currentServer, currentChannel } = useServer();
-  const [viewMode, setViewMode] = useState('servers');
+  const [viewMode, setViewMode] = useState('dms'); // 'servers' | 'dms' | 'friends'
 
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="h-screen flex bg-gray-900 text-gray-100">
-      <div className="w-18 bg-gray-950 flex flex-col items-center py-3 space-y-2">
-        <button onClick={() => setViewMode('dms')} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${viewMode === 'dms' ? 'bg-blue-600' : 'bg-gray-800 hover:bg-blue-600'}`}>
-          <MessageSquare className="w-6 h-6" />
-        </button>
-        <button onClick={() => setViewMode('friends')} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${viewMode === 'friends' ? 'bg-green-600' : 'bg-gray-800 hover:bg-green-600'}`}>
-          <Users className="w-6 h-6" />
-        </button>
-        <div className="w-8 h-0.5 bg-gray-800 rounded-full my-2" />
-        <button onClick={() => setViewMode('servers')} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${viewMode === 'servers' ? 'bg-blue-600' : 'bg-gray-800 hover:bg-blue-600'}`}>
-          <Hash className="w-6 h-6" />
-        </button>
+    // ANA TAŞIYICI: Discord'un klasik karanlık teması ve tam ekran kaplaması
+    <div className="flex h-screen w-screen overflow-hidden bg-[#1E1F22] text-[#DBDEE1] font-sans selection:bg-[#5865F2] selection:text-white">
+      
+      {/* 1. SÜTUN: EN SOL BAR (72px) - Sunucular ve DM/Ana Sayfa */}
+      <ServerList viewMode={viewMode} setViewMode={setViewMode} />
+
+      {/* 2. SÜTUN: ORTA YAN BAR (240px) - Kanallar veya DM/Arkadaş Listesi */}
+      <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 rounded-tl-lg overflow-hidden border-r border-[#1E1F22]/50 shadow-sm">
+        {viewMode === 'servers' ? (
+          currentServer ? <ChannelList /> : null
+        ) : (
+          <DMList setViewMode={setViewMode} />
+        )}
       </div>
 
-      {viewMode === 'servers' && (
-        <>
-          <ServerList />
-          {currentServer && <ChannelList />}
-          <div className="flex-1 flex flex-col min-w-0">
-            {currentChannel ? (
-              <>
-                <ChatArea />
-                <VoicePanel />
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-500">
-                <p>Select a channel to start chatting</p>
+      {/* 3. SÜTUN: ANA İÇERİK (Esnek Genişlik) - Sohbet Ekranı */}
+      <div className="flex flex-col flex-1 min-w-0 bg-[#313338] relative">
+        {viewMode === 'servers' ? (
+          currentChannel ? (
+            <>
+              <ChatArea />
+              <VoicePanel />
+            </>
+          ) : (
+            // Kanal Seçilmediğinde Çıkan Şık Ekran
+            <div className="flex-1 flex flex-col items-center justify-center text-[#949BA4] select-none">
+              <div className="w-20 h-20 mb-6 bg-[#2B2D31] rounded-full flex items-center justify-center shadow-inner">
+                <span className="text-4xl font-bold text-[#404249]">#</span>
               </div>
-            )}
-          </div>
-          {currentChannel && <MemberList />}
-        </>
-      )}
-
-      {viewMode === 'dms' && (
-        <>
-          <DMList />
+              <h3 className="text-xl font-bold text-[#F2F3F5] mb-2">Kanal Seçilmedi</h3>
+              <p className="text-[15px]">Sohbete başlamak için sol taraftan bir metin veya ses kanalı seçin.</p>
+            </div>
+          )
+        ) : viewMode === 'friends' ? (
+          <FriendsList />
+        ) : (
           <DMArea />
-        </>
+        )}
+      </div>
+
+      {/* 4. SÜTUN: SAĞ BAR (240px) - Üye Listesi (Sadece Sunucularda) */}
+      {viewMode === 'servers' && currentChannel && (
+        <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 border-l border-[#1E1F22]/50">
+          <MemberList />
+        </div>
       )}
 
-      {viewMode === 'friends' && <FriendsList />}
     </div>
   );
 }
@@ -82,11 +85,10 @@ function App() {
             <ServerProvider>
               <VoiceProvider>
                 <AppContent />
-                {/* Tost Bildirimleri Buraya Eklendi */}
                 <Toaster 
                   position="bottom-right"
                   toastOptions={{
-                    style: { background: '#36393f', color: '#fff' }
+                    style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' }
                   }}
                 />
               </VoiceProvider>

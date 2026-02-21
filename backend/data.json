@@ -60,6 +60,26 @@
       "creatorId": "7e9e10be-affa-4ed3-a3ef-3bdd7496554f",
       "inviteCode": "QWTUEG",
       "createdAt": 1768337472614
+    },
+    {
+      "id": "7ac0bcb0-b63c-4758-85e6-a86a7e7e5401",
+      "name": "DM-2e6da770-e039-48b1-a41d-8574e329c2da-63aac356-43f3-4908-ae6f-264419dd58a4",
+      "isDM": true,
+      "dmUserIds": [
+        "2e6da770-e039-48b1-a41d-8574e329c2da",
+        "63aac356-43f3-4908-ae6f-264419dd58a4"
+      ],
+      "createdAt": 1771700309459
+    },
+    {
+      "id": "f143bc1a-9135-4a6d-b439-430f87eec360",
+      "name": "DM-63aac356-43f3-4908-ae6f-264419dd58a4-f7cdb1c0-85a1-45e4-810b-b99145c5488e",
+      "isDM": true,
+      "dmUserIds": [
+        "63aac356-43f3-4908-ae6f-264419dd58a4",
+        "f7cdb1c0-85a1-45e4-810b-b99145c5488e"
+      ],
+      "createdAt": 1771700325254
     }
   ],
   "channels": [
@@ -121,6 +141,20 @@
       "name": "general",
       "type": "text",
       "createdAt": 1768337472614
+    },
+    {
+      "id": "fe9f29e2-fe53-4037-84a2-3ca1aab53efe",
+      "serverId": "7ac0bcb0-b63c-4758-85e6-a86a7e7e5401",
+      "name": "dm-chat",
+      "type": "text",
+      "createdAt": 1771700309459
+    },
+    {
+      "id": "e9c11d3e-ea11-48e3-a198-82ad1897d92d",
+      "serverId": "f143bc1a-9135-4a6d-b439-430f87eec360",
+      "name": "dm-chat",
+      "type": "text",
+      "createdAt": 1771700325254
     }
   ],
   "users": [
@@ -141,14 +175,15 @@
       "avatar": "https://ui-avatars.com/api/?name=tahos&background=random",
       "status": "online",
       "createdAt": 1768343677348
-    }
-  ],
-  "dmConversations": [
+    },
     {
-      "id": "e943a6cd-68bd-4e61-991d-b0d24d416aca",
-      "user1Id": "63aac356-43f3-4908-ae6f-264419dd58a4",
-      "user2Id": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
-      "createdAt": 1768343887587
+      "id": "2e6da770-e039-48b1-a41d-8574e329c2da",
+      "username": "annen12@gmail.com",
+      "email": "annen12@gmail.com",
+      "password": "$2b$10$olR8j0frHvYXxWd/3FURXeZDnNys4w8o6547uYhSZq2yNHSpuYGtS",
+      "avatar": "https://ui-avatars.com/api/?name=annen12@gmail.com&background=random",
+      "status": "online",
+      "createdAt": 1771697851252
     }
   ],
   "friendRequests": [
@@ -165,6 +200,13 @@
       "toUserId": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
       "status": "accepted",
       "createdAt": 1768343878900
+    },
+    {
+      "id": "706dccc2-d081-49b5-a79a-47702bfa293a",
+      "fromUserId": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "toUserId": "2e6da770-e039-48b1-a41d-8574e329c2da",
+      "status": "accepted",
+      "createdAt": 1771699794593
     }
   ],
   "friendships": [
@@ -173,10 +215,15 @@
       "user1Id": "63aac356-43f3-4908-ae6f-264419dd58a4",
       "user2Id": "f7cdb1c0-85a1-45e4-810b-b99145c5488e",
       "createdAt": 1768343883474
+    },
+    {
+      "id": "be66f341-a24a-43ba-b428-176bdf4cd4c5",
+      "user1Id": "2e6da770-e039-48b1-a41d-8574e329c2da",
+      "user2Id": "63aac356-43f3-4908-ae6f-264419dd58a4",
+      "createdAt": 1771699800676
     }
   ],
-  "dmMessages": "[[\"e943a6cd-68bd-4e61-991d-b0d24d416aca\",[]]]",
-  "channelMessages": "[[\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",[{\"id\":\"42492471-2fea-4977-a3ff-25acd62f2290\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdadads\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337115939,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ef7a23a8-e4af-4fac-a6c5-df967be587ae\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"adsadladskl\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337117948,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"99fd19ef-8b5c-46e0-ab67-82252913c8e8\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"asd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342859342,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"7ce05369-4aab-4f4b-a187-6547b46a4078\",\"username\":\"tahos\",\"userId\":null,\"content\":\"ad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342864164,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"b01a5616-5cb9-483d-88e1-e4283ebaf4d5\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"das\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343463886,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"d3f4f4c7-3613-4c3f-9c7e-b8a6277bd980\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343472904,\"type\":\"user\",\"isEdited\":false,\"metadata\":null}]]]",
-  "userStatuses": "[[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"online\"],[\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"online\"]]",
-  "serverMembers": "[[\"default-server\",[\"63aac356-43f3-4908-ae6f-264419dd58a4\"]],[\"3540be37-68c3-4c36-a021-7c696f361275\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"86a77d48-fb87-4a54-8707-dab662b607a4\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\",\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"63aac356-43f3-4908-ae6f-264419dd58a4\"]],[\"5f5e3f98-23cd-40ce-a224-a1f5529cd067\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"a2b37b53-8229-41f1-8ad6-073c3bfc1332\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"2b424933-980b-46c1-b3a2-a873c02cb2f6\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"09a6218a-34e4-418d-a1e2-3908be811d8b\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]]]"
+  "channelMessages": "[[\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",[{\"id\":\"42492471-2fea-4977-a3ff-25acd62f2290\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdadads\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337115939,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ef7a23a8-e4af-4fac-a6c5-df967be587ae\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"adsadladskl\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768337117948,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"99fd19ef-8b5c-46e0-ab67-82252913c8e8\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"asd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342859342,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"7ce05369-4aab-4f4b-a187-6547b46a4078\",\"username\":\"tahos\",\"userId\":null,\"content\":\"ad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768342864164,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"b01a5616-5cb9-483d-88e1-e4283ebaf4d5\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"das\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343463886,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"d3f4f4c7-3613-4c3f-9c7e-b8a6277bd980\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1768343472904,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"1ded8e3e-6115-4745-b93f-2a60c4a79be1\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdasdad\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1769949448288,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"cb5e94c2-0b06-4a14-bdd1-ad4b2339600f\",\"username\":\"annen123gmail.com\",\"userId\":null,\"content\":\"[GIF:https://media.tenor.com/9thnUHjMC4QAAAAC/roman-reigns-one.gif]\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1769949706433,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"2a61ac97-3b26-4666-9606-ac1b465c6711\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdknmadns\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771697820435,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"f3092604-f74d-4487-bfce-f27e1ec6e970\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"asdlasdlm\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771697870365,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"0dde2491-39ce-45c8-8b7a-7bb090c8885a\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"😁\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771697882310,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ab7daca7-6b99-476a-adf8-53d704bb6641\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdş,öad,\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771698080579,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"dd078e91-5007-43d3-ab98-a044bdda08e8\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"sdflsdf\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771698093307,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"4f87308d-18f3-4846-a479-c62d782b963c\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"cvdfbh\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771698135406,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"764e8bc5-31bf-4160-b4f0-387a31f90277\",\"username\":\"tahos\",\"userId\":null,\"content\":\"XŞİÖDas\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771698554943,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"92e2f0fb-6f8d-4b53-8424-ecf9289c3994\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdlmşasdm,\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771699182789,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"c5a644a1-fb32-4aef-bb2e-17a832d4f9c7\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"dşöaasd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771699191846,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"e84a9a0b-5728-4c2c-b3bc-4e97231e1e78\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"ssdfsdf\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771699877728,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"8d79a664-e425-4a4f-82ee-4643d5c2d610\",\"username\":\"tahos\",\"userId\":null,\"content\":\"😉\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771699890984,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ec0efffa-0f06-4d7e-a51d-247d6ba9e2bd\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdasd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700207885,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"89008c98-6401-4841-a50f-6a39b6569c1f\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"sdfsdf,\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700218539,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"e1885a9a-60aa-4180-b92d-a0bbcaf12c90\",\"username\":\"tahos\",\"userId\":null,\"content\":\"adasdasd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700824881,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"865736db-5eb0-4b4e-b179-5e4ba753a677\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"sdfldfsdf\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700832897,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"fa4421f7-2119-4210-904a-d856bf904f65\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"adasd\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700836746,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"5b5601d1-8434-48ed-8e9b-4a2e08057659\",\"username\":\"tahos\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700856714,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"9d7ae85a-5d21-4ecf-9792-50f18975f4d3\",\"username\":\"tahos\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700857975,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"c454e17b-9027-4e66-a503-ab713785fef8\",\"username\":\"tahos\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700857976,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"677181f6-21e1-48eb-a2f3-c7220851ef42\",\"username\":\"tahos\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700859683,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"63992649-9c43-4931-9878-3f3e0393545d\",\"username\":\"tahos\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700862979,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"a4f61f66-7115-4c70-9689-ef6cd9f046d4\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700864907,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"7be3d380-1b0e-4125-b19a-fa11da089aa9\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700866566,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"52ff735e-5972-48cd-94fc-fee672b8f9b9\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700866567,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"c898dc33-dae3-4552-91b5-b90c83293c3a\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700866568,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"072e6ed3-1073-49c9-b4e1-40e7601f7a30\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700866691,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"58b71d78-e65a-464d-be37-3ef6f1328246\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700867388,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"6058cb5a-99d2-4944-8800-2f117c12a690\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700867389,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"8bf994ec-ebe6-4d48-9ead-a406c0d924f6\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700867390,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"13d5fe1b-0dd9-4bd4-b19e-6ad4f51144fc\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700867390,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"b523cf10-8b61-4530-a90b-e929f0bb6d0f\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700867492,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"dabdf4e3-5519-43a8-85cc-d456f1a33457\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700869072,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"5a4fc69b-f0af-4d61-aa7b-0feb9dc471c6\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700869074,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"d0d5d3f0-8961-4c0c-9a24-efa5df7997a4\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700869074,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"b8038ca4-5270-4eca-b95f-064c04facc38\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700869075,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"4a0419ee-d291-4bfc-82c9-634b974895cc\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\".\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700869075,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"92010c67-7912-4caa-8526-72d9cbf3505c\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"fghfgh\",\"channelId\":\"ae4fa9b7-a3a9-4540-9d6a-1e610e2946ae\",\"timestamp\":1771700901974,\"type\":\"user\",\"isEdited\":false,\"metadata\":null}]],[\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",[{\"id\":\"44929d63-c5ec-41f0-b01d-d16739749aef\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdadsasd\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700660727,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"0cc0f3fb-7d5f-429a-90bb-a5f67b0d544e\",\"username\":\"tahos\",\"userId\":null,\"content\":\"asdadsasd\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700827944,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"9834edb0-08b3-4175-88a4-d1cecfd39b27\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"lmadslmkşas\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700843713,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"ef29ba79-2ddc-4b54-ae3b-1828ccbb667b\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"dgdfg\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700907254,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"91d20d2f-dd0a-4b39-b02a-ed62400dae55\",\"username\":\"tahos\",\"userId\":null,\"content\":\"dfgdfg\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700923502,\"type\":\"user\",\"isEdited\":false,\"metadata\":null},{\"id\":\"e1642294-bab2-4e7d-b2c6-b5d561b8171a\",\"username\":\"annen12@gmail.com\",\"userId\":null,\"content\":\"fghfghhfg\",\"channelId\":\"fe9f29e2-fe53-4037-84a2-3ca1aab53efe\",\"timestamp\":1771700945600,\"type\":\"user\",\"isEdited\":false,\"metadata\":null}]]]",
+  "userStatuses": "[[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"online\"],[\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"online\"],[\"2e6da770-e039-48b1-a41d-8574e329c2da\",\"online\"]]",
+  "serverMembers": "[[\"default-server\",[\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"2e6da770-e039-48b1-a41d-8574e329c2da\"]],[\"3540be37-68c3-4c36-a021-7c696f361275\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"86a77d48-fb87-4a54-8707-dab662b607a4\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\",\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\",\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"2e6da770-e039-48b1-a41d-8574e329c2da\"]],[\"5f5e3f98-23cd-40ce-a224-a1f5529cd067\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"a2b37b53-8229-41f1-8ad6-073c3bfc1332\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"2b424933-980b-46c1-b3a2-a873c02cb2f6\",[\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]],[\"09a6218a-34e4-418d-a1e2-3908be811d8b\",[\"7e9e10be-affa-4ed3-a3ef-3bdd7496554f\"]],[\"7ac0bcb0-b63c-4758-85e6-a86a7e7e5401\",[\"2e6da770-e039-48b1-a41d-8574e329c2da\",\"63aac356-43f3-4908-ae6f-264419dd58a4\"]],[\"f143bc1a-9135-4a6d-b439-430f87eec360\",[\"63aac356-43f3-4908-ae6f-264419dd58a4\",\"f7cdb1c0-85a1-45e4-810b-b99145c5488e\"]]]"
 }
