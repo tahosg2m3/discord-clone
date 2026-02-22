@@ -6,7 +6,6 @@ import { fetchServers } from '../../services/api';
 import ServerIcon from '../server/ServerIcon';
 import CreateServerModal from '../server/CreateServerModal';
 import JoinServerModal from '../server/JoinServerModal';
-import UserProfile from '../profile/UserProfile';
 
 export default function ServerList({ viewMode, setViewMode }) {
   const { servers, setServers, currentServer, setCurrentServer } = useServer();
@@ -21,7 +20,6 @@ export default function ServerList({ viewMode, setViewMode }) {
   return (
     <div className="w-[72px] bg-[#1E1F22] flex flex-col items-center pt-3 space-y-0 h-full overflow-y-auto no-scrollbar shrink-0 relative z-20">
       
-      {/* 1. EN ÜST: DM / ANA SAYFA BUTONU */}
       <div className="relative group flex items-center justify-center w-[72px] h-[48px] mb-2 cursor-pointer">
         <div className={`absolute left-0 w-1 bg-white rounded-r-md transition-all duration-300 ease-in-out ${viewMode === 'dms' ? 'h-10 opacity-100' : 'h-2 opacity-0 group-hover:h-5 group-hover:opacity-100'}`} />
         <button
@@ -30,14 +28,12 @@ export default function ServerList({ viewMode, setViewMode }) {
         >
           <MessageSquare className="w-6 h-6" />
         </button>
-        {/* Tooltip */}
         <div className="absolute left-[76px] px-3 py-2 bg-[#111214] text-[#DBDEE1] text-[14px] font-semibold rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-all duration-150 scale-95 group-hover:scale-100 shadow-xl flex items-center">
           <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-[#111214] rotate-45" />
           Direct Messages
         </div>
       </div>
 
-      {/* 2. ARKADAŞLAR BUTONU */}
       <div className="relative group flex items-center justify-center w-[72px] h-[48px] mb-2 cursor-pointer">
         <div className={`absolute left-0 w-1 bg-white rounded-r-md transition-all duration-300 ease-in-out ${viewMode === 'friends' ? 'h-10 opacity-100' : 'h-2 opacity-0 group-hover:h-5 group-hover:opacity-100'}`} />
         <button
@@ -52,10 +48,8 @@ export default function ServerList({ viewMode, setViewMode }) {
         </div>
       </div>
 
-      {/* AYIRICI ÇİZGİ */}
       <div className="w-8 h-[2px] bg-[#313338] my-2 shrink-0 rounded-full" />
 
-      {/* 3. SUNUCULAR LİSTESİ */}
       {servers.map((server) => (
         <ServerIcon
           key={server.id}
@@ -65,7 +59,6 @@ export default function ServerList({ viewMode, setViewMode }) {
         />
       ))}
 
-      {/* Ekle Butonu */}
       <div className="relative group flex items-center justify-center w-[72px] h-[48px] mt-2 mb-2 cursor-pointer">
         <div className="absolute left-0 w-1 bg-white rounded-r-md transition-all duration-300 h-2 opacity-0 group-hover:h-5 group-hover:opacity-100" />
         <button onClick={() => setShowCreateModal(true)} className="w-[48px] h-[48px] bg-[#313338] hover:bg-[#23A559] rounded-[24px] hover:rounded-[16px] transition-all duration-300 flex items-center justify-center text-[#23A559] hover:text-white">
@@ -77,7 +70,6 @@ export default function ServerList({ viewMode, setViewMode }) {
         </div>
       </div>
 
-      {/* Katıl Butonu */}
       <div className="relative group flex items-center justify-center w-[72px] h-[48px] mb-2 cursor-pointer">
         <div className="absolute left-0 w-1 bg-white rounded-r-md transition-all duration-300 h-2 opacity-0 group-hover:h-5 group-hover:opacity-100" />
         <button onClick={() => setShowJoinModal(true)} className="w-[48px] h-[48px] bg-[#313338] hover:bg-[#23A559] rounded-[24px] hover:rounded-[16px] transition-all duration-300 flex items-center justify-center text-[#23A559] hover:text-white">

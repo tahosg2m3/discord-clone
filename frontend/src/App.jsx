@@ -16,28 +16,36 @@ import VoicePanel from './components/voice/VoicePanel';
 import DMList from './components/dm/DMList';
 import DMArea from './components/dm/DMArea';
 import FriendsList from './components/friends/FriendsList';
+import UserProfile from './components/profile/UserProfile'; // Profilimizi içe aktardık
 
 function AppContent() {
   const { user } = useAuth();
   const { currentServer, currentChannel } = useServer();
-  const [viewMode, setViewMode] = useState('dms'); // 'servers' | 'dms' | 'friends'
+  const [viewMode, setViewMode] = useState('dms'); 
 
   if (!user) return <AuthScreen />;
 
   return (
-    // ANA TAŞIYICI: Discord'un klasik karanlık teması ve tam ekran kaplaması
     <div className="flex h-screen w-screen overflow-hidden bg-[#1E1F22] text-[#DBDEE1] font-sans selection:bg-[#5865F2] selection:text-white">
       
-      {/* 1. SÜTUN: EN SOL BAR (72px) - Sunucular ve DM/Ana Sayfa */}
+      {/* 1. SÜTUN: EN SOL BAR (72px) - Sunucular */}
       <ServerList viewMode={viewMode} setViewMode={setViewMode} />
 
-      {/* 2. SÜTUN: ORTA YAN BAR (240px) - Kanallar veya DM/Arkadaş Listesi */}
+      {/* 2. SÜTUN: ORTA YAN BAR (240px) */}
       <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 rounded-tl-lg overflow-hidden border-r border-[#1E1F22]/50 shadow-sm">
-        {viewMode === 'servers' ? (
-          currentServer ? <ChannelList /> : null
-        ) : (
-          <DMList setViewMode={setViewMode} />
-        )}
+        
+        {/* Üst Kısım: Kanallar veya DM/Arkadaş Listesi */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {viewMode === 'servers' ? (
+            currentServer ? <ChannelList /> : null
+          ) : (
+            <DMList setViewMode={setViewMode} />
+          )}
+        </div>
+
+        {/* ALT KISIM: İŞTE YENİ PROFİL BARIMIZ BURADA! */}
+        <UserProfile />
+
       </div>
 
       {/* 3. SÜTUN: ANA İÇERİK (Esnek Genişlik) - Sohbet Ekranı */}
@@ -49,7 +57,6 @@ function AppContent() {
               <VoicePanel />
             </>
           ) : (
-            // Kanal Seçilmediğinde Çıkan Şık Ekran
             <div className="flex-1 flex flex-col items-center justify-center text-[#949BA4] select-none">
               <div className="w-20 h-20 mb-6 bg-[#2B2D31] rounded-full flex items-center justify-center shadow-inner">
                 <span className="text-4xl font-bold text-[#404249]">#</span>
@@ -65,7 +72,7 @@ function AppContent() {
         )}
       </div>
 
-      {/* 4. SÜTUN: SAĞ BAR (240px) - Üye Listesi (Sadece Sunucularda) */}
+      {/* 4. SÜTUN: SAĞ BAR (240px) - Üye Listesi */}
       {viewMode === 'servers' && currentChannel && (
         <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 border-l border-[#1E1F22]/50">
           <MemberList />
@@ -85,12 +92,7 @@ function App() {
             <ServerProvider>
               <VoiceProvider>
                 <AppContent />
-                <Toaster 
-                  position="bottom-right"
-                  toastOptions={{
-                    style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' }
-                  }}
-                />
+                <Toaster position="bottom-right" toastOptions={{ style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' } }} />
               </VoiceProvider>
             </ServerProvider>
           </DMProvider>

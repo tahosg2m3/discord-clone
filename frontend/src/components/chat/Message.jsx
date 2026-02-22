@@ -5,17 +5,13 @@ import { formatTime } from '../../utils/formatTime';
 import { getColorForString } from '../../utils/colors';
 import { Pencil, Trash2 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
-import { useServer } from '../../context/ServerContext';
 import toast from 'react-hot-toast';
-import UserPopover from '../profile/UserPopover'; // YENİ EKLENDİ
+import UserPopover from '../profile/UserPopover';
 
 export default function Message({ message, isOwn, grouped, userId }) {
   const { socket } = useSocket();
-  const { currentChannel } = useServer();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
-  
-  // Profil kartını açmak için state
   const [showProfile, setShowProfile] = useState(false);
 
   if (message.type === 'system') {
@@ -30,35 +26,44 @@ export default function Message({ message, isOwn, grouped, userId }) {
 
   const handleDelete = () => {
     if (window.confirm('Bu mesajı silmek istediğine emin misin?')) {
-      socket.emit('message:delete', { messageId: message.id, channelId: currentChannel.id });
+      socket.emit('message:delete', { 
+        messageId: message.id, 
+        channelId: message.channelId, 
+        userId 
+      });
     }
   };
 
   const handleEdit = () => {
-    if (editContent.trim() === message.content) { setIsEditing(false); return; }
-    socket.emit('message:edit', { messageId: message.id, channelId: currentChannel.id, content: editContent });
+    if (editContent.trim() === message.content) { 
+      setIsEditing(false); 
+      return; 
+    }
+    
+    socket.emit('message:edit', { 
+      messageId: message.id, 
+      channelId: message.channelId, 
+      content: editContent, 
+      userId 
+    });
+    
     setIsEditing(false);
     toast.success('Mesaj güncellendi');
   };
 
   const avatarColor = getColorForString(message.username);
   const initial = message.username[0].toUpperCase();
-
-  // Tıklandığında popover'a gönderilecek kullanıcı objesi
-  const messageUser = {
-    id: message.userId, // Mesaj modelinde gönderen kişinin ID'si
-    username: message.username,
-  };
+  const messageUser = { id: message.userId, username: message.username };
 
   return (
     <>
-      {/* Kullanıcı Profili Modalı */}
       {showProfile && (
         <UserPopover targetUser={messageUser} onClose={() => setShowProfile(false)} />
       )}
 
       <div className={`group relative px-4 py-0.5 hover:bg-[#2E3035] transition-colors ${grouped ? '' : 'mt-[17px]'}`}>
         
+        {/* DÜZENLEME VE SİLME BUTONLARI */}
         {isOwn && !isEditing && (
           <div className="absolute right-4 -top-4 bg-[#313338] border border-[#1E1F22] rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center z-10 overflow-hidden">
             <button onClick={() => setIsEditing(true)} className="p-2 hover:bg-[#404249] text-[#B5BAC1] hover:text-[#DBDEE1] transition-colors" title="Düzenle">
@@ -79,9 +84,11 @@ export default function Message({ message, isOwn, grouped, userId }) {
         )}
 
         <div className="flex items-start space-x-4 pl-[56px] relative">
+          
+          {/* Avatar Gösterimi */}
           {!grouped && (
             <div 
-              onClick={() => setShowProfile(true)}
+              onClick={() => setShowProfile(true)} 
               className="absolute left-4 top-0.5 w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold select-none cursor-pointer hover:opacity-80 shadow-sm transition-opacity" 
               style={{ backgroundColor: avatarColor }}
             >
@@ -93,21 +100,36 @@ export default function Message({ message, isOwn, grouped, userId }) {
             {!grouped && (
               <div className="flex items-baseline space-x-2 mb-0.5">
                 <span 
-                  onClick={() => setShowProfile(true)}
+                  onClick={() => setShowProfile(true)} 
                   className="text-[1rem] font-medium hover:underline cursor-pointer text-[#F2F3F5]"
                 >
                   {message.username}
                 </span>
-                <span className="text-[0.75rem] text-[#949BA4] select-none font-medium">{formatTime(message.timestamp)}</span>
+                <span className="text-[0.75rem] text-[#949BA4] select-none font-medium">
+                  {formatTime(message.timestamp)}
+                </span>
               </div>
             )}
 
+            {/* Mesaj Düzenleme Modu */}
             {isEditing ? (
               <div className="bg-[#2B2D31] p-3 rounded-lg mt-1">
-                <input value={editContent} onChange={(e) => setEditContent(e.target.value)} className="w-full bg-transparent text-[#DBDEE1] focus:outline-none" autoFocus onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) handleEdit(); if (e.key === 'Escape') setIsEditing(false); }} />
-                <div className="text-[11px] text-[#949BA4] mt-2 font-medium">İptal için <span className="text-[#00A8FC] cursor-pointer hover:underline" onClick={() => setIsEditing(false)}>escape</span> • Kaydetmek için <span className="text-[#00A8FC] cursor-pointer hover:underline" onClick={handleEdit}>enter</span></div>
+                <input 
+                  value={editContent} 
+                  onChange={(e) => setEditContent(e.target.value)} 
+                  className="w-full bg-transparent text-[#DBDEE1] focus:outline-none" 
+                  autoFocus 
+                  onKeyDown={(e) => { 
+                    if (e.key === 'Enter' && !e.shiftKey) handleEdit(); 
+                    if (e.key === 'Escape') setIsEditing(false); 
+                  }} 
+                />
+                <div className="text-[11px] text-[#949BA4] mt-2 font-medium">
+                  İptal için <span className="text-[#00A8FC] cursor-pointer hover:underline" onClick={() => setIsEditing(false)}>escape</span> • Kaydetmek için <span className="text-[#00A8FC] cursor-pointer hover:underline" onClick={handleEdit}>enter</span>
+                </div>
               </div>
             ) : (
+              // Normal Mesaj Gösterimi
               <div className="text-[#DBDEE1] break-words leading-[1.375rem] text-[1rem] markdown-content">
                 <ReactMarkdown 
                   remarkPlugins={[remarkGfm]}
@@ -122,12 +144,23 @@ export default function Message({ message, isOwn, grouped, userId }) {
               </div>
             )}
 
+            {/* Link Önizleme (Metadata) */}
             {!isEditing && message.metadata && (
               <div className="mt-2 max-w-md bg-[#2B2D31] border-l-[4px] border-[#1E1F22] rounded-[4px] p-3 cursor-pointer">
-                <div className="text-[12px] text-[#949BA4] font-medium mb-1">{new URL(message.metadata.url).hostname}</div>
-                <a href={message.metadata.url} target="_blank" rel="noopener noreferrer" className="block text-[#00A8FC] font-semibold hover:underline mb-1 truncate text-[15px]">{message.metadata.title}</a>
-                {message.metadata.description && <p className="text-[14px] text-[#DBDEE1] line-clamp-3 mb-3">{message.metadata.description}</p>}
-                {message.metadata.image && <img src={message.metadata.image} alt="Preview" className="rounded-[4px] max-h-64 object-cover w-auto" />}
+                <div className="text-[12px] text-[#949BA4] font-medium mb-1">
+                  {new URL(message.metadata.url).hostname}
+                </div>
+                <a href={message.metadata.url} target="_blank" rel="noopener noreferrer" className="block text-[#00A8FC] font-semibold hover:underline mb-1 truncate text-[15px]">
+                  {message.metadata.title}
+                </a>
+                {message.metadata.description && (
+                  <p className="text-[14px] text-[#DBDEE1] line-clamp-3 mb-3">
+                    {message.metadata.description}
+                  </p>
+                )}
+                {message.metadata.image && (
+                  <img src={message.metadata.image} alt="Preview" className="rounded-[4px] max-h-64 object-cover w-auto" />
+                )}
               </div>
             )}
           </div>
