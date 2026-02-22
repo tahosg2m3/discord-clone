@@ -23,11 +23,18 @@ export default function DMArea() {
   }, [activeDM]);
 
   useEffect(() => {
-    if (!socket || !activeDM) return;
+    if (!socket || !activeDM || !user) return;
     
+    // Garanti: DM değiştiğinde gizli odaya katıldığımızdan emin oluyoruz
+    socket.emit('user:join', { channelId: activeDM.channelId, username: user.username });
+
     const handleReceive = (message) => {
       if (message.channelId === activeDM.channelId) {
-        setMessages(prev => [...prev, message]);
+        setMessages(prev => {
+          // GARANTİ KALKANI: Çift mesajı engelle
+          if (prev.some(m => m.id === message.id)) return prev;
+          return [...prev, message];
+        });
       }
     };
     
@@ -44,19 +51,26 @@ export default function DMArea() {
     socket.on('message:delete', handleDelete);
 
     return () => {
+      socket.emit('user:leave', { channelId: activeDM.channelId });
       socket.off('message:receive', handleReceive);
       socket.off('message:update', handleUpdate);
       socket.off('message:delete', handleDelete);
     };
-  }, [socket, activeDM]);
+  }, [socket, activeDM, user]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleSendMessage = (content) => {
-    if (!content.trim() || !activeDM || !socket) return;
-    socket.emit('message:send', { channelId: activeDM.channelId, content });
+    if (!content.trim() || !activeDM || !socket || !user) return;
+    
+    socket.emit('message:send', { 
+      channelId: activeDM.channelId, 
+      content,
+      userId: user.id,
+      username: user.username
+    });
   };
 
   if (!activeDM) {
@@ -76,7 +90,7 @@ export default function DMArea() {
 
   return (
     <div className="flex-1 flex flex-col bg-[#313338] min-w-0 h-full">
-      {/* Üst Bar */}
+      
       <div className="h-12 px-4 flex items-center shadow-sm border-b border-[#1E1F22] shrink-0 bg-[#313338] z-10">
         <div className="flex items-center space-x-3">
           <span className="text-[#949BA4] text-xl font-medium select-none">@</span>
@@ -87,9 +101,8 @@ export default function DMArea() {
         </div>
       </div>
 
-      {/* Mesajlar */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
-        {/* Karşılama Banner'ı */}
+        
         <div className="mt-8 mb-6 pb-4 border-b border-[#2B2D31]">
           {activeDM.otherUser.avatar && !activeDM.otherUser.avatar.includes('ui-avatars.com') ? (
             <img src={activeDM.otherUser.avatar} className="w-20 h-20 rounded-full object-cover mb-4" alt="" />
@@ -108,25 +121,16 @@ export default function DMArea() {
           const grouped = prevMsg && prevMsg.userId === msg.userId && (msg.timestamp - prevMsg.timestamp < 300000);
           
           return (
-            <Message 
-              key={msg.id} 
-              message={msg} 
-              isOwn={isOwn} 
-              grouped={grouped} 
-              userId={user.id} 
-            />
+            <Message key={msg.id} message={msg} isOwn={isOwn} grouped={grouped} userId={user.id} />
           );
         })}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Mesaj Gönderme Kutusu */}
       <div className="p-4 shrink-0">
-        <MessageInput 
-          onSendMessage={handleSendMessage} 
-          placeholder={`@${activeDM.otherUser.username} kişisine mesaj gönder`} 
-        />
+        <MessageInput onSendMessage={handleSendMessage} placeholder={`@${activeDM.otherUser.username} kişisine mesaj gönder`} />
       </div>
+
     </div>
   );
 }

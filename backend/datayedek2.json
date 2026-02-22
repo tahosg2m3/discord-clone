@@ -1,0 +1,34 @@
+{
+  "servers": [
+    {
+      "id": "default-server",
+      "name": "General Server",
+      "creatorId": "system",
+      "inviteCode": "PUBLIC",
+      "createdAt": 1771752910516,
+      "isDM": false
+    }
+  ],
+  "channels": [
+    {
+      "id": "bc97e448-196d-4647-b852-9dd60c0c3567",
+      "name": "general",
+      "serverId": "default-server",
+      "type": "text",
+      "createdAt": 1771752910517
+    },
+    {
+      "id": "a3dae723-f94b-4f39-94d0-b167f894e405",
+      "name": "voice-chat",
+      "serverId": "default-server",
+      "type": "voice",
+      "createdAt": 1771752910517
+    }
+  ],
+  "users": [],
+  "friendRequests": [],
+  "friendships": [],
+  "channelMessages": "[]",
+  "userStatuses": "[]",
+  "serverMembers": "[[\"default-server\",[]]]"
+}

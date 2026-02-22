@@ -16,6 +16,9 @@ class InMemoryStorage {
     this.userStatuses = new Map();    
     this.serverMembers = new Map();   
 
+    // Arka arkaya kaydetmeleri önlemek için zamanlayıcı (BÜYÜK PERFORMANS ARTIŞI)
+    this.saveTimeout = null;
+
     this.loadData();
   }
 
@@ -46,23 +49,33 @@ class InMemoryStorage {
     }
   }
 
+  // YENİ VE GÜÇLENDİRİLMİŞ KAYDETME SİSTEMİ (Debounce)
   saveData() {
-    try {
-      const data = {
-        servers: this.servers,
-        channels: this.channels,
-        users: this.users,
-        friendRequests: this.friendRequests,
-        friendships: this.friendships,
-        channelMessages: JSON.stringify(Array.from(this.channelMessages.entries())),
-        userStatuses: JSON.stringify(Array.from(this.userStatuses.entries())),
-        serverMembers: JSON.stringify(Array.from(this.serverMembers.entries())),
-      };
-      
-      fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-    } catch (error) {
-      console.error('Veri kaydetme hatası:', error);
+    // Eğer hali hazırda bekleyen bir kayıt varsa, onu iptal et ve süreyi baştan başlat
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
     }
+    
+    // Mesajlar anında hafızaya (RAM) alınır ama diske yazmak için 500ms bekler.
+    // Böylece art arda atılan 20 mesaj diski 20 kere yormaz, sadece 1 kere toplu kaydeder.
+    this.saveTimeout = setTimeout(() => {
+      try {
+        const data = {
+          servers: this.servers,
+          channels: this.channels,
+          users: this.users,
+          friendRequests: this.friendRequests,
+          friendships: this.friendships,
+          channelMessages: JSON.stringify(Array.from(this.channelMessages.entries())),
+          userStatuses: JSON.stringify(Array.from(this.userStatuses.entries())),
+          serverMembers: JSON.stringify(Array.from(this.serverMembers.entries())),
+        };
+        
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+      } catch (error) {
+        console.error('Veri kaydetme hatası:', error);
+      }
+    }, 500); 
   }
 
   seedData() {
@@ -250,11 +263,9 @@ class InMemoryStorage {
   updateUserStatus(id, status) { this.userStatuses.set(id, status); }
   getUserStatus(id) { return this.userStatuses.get(id) || 'offline'; }
 
-  // --- DM AS A SERVER (YENİ ALTYAPI) ---
+  // --- DM AS A SERVER ---
   getOrCreateDMConversation(u1, u2) {
     const [id1, id2] = [u1, u2].sort();
-    
-    // Zaten 2 kişi arasında DM sunucusu var mı?
     let dmServer = this.servers.find(s => s.isDM && s.dmUserIds && s.dmUserIds.includes(id1) && s.dmUserIds.includes(id2));
     
     if (!dmServer) {
