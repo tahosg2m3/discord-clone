@@ -18,7 +18,20 @@ export const createPeerConnection = (socket, remoteUserId, stream) => {
 
   return pc;
 };
-const stream = await navigator.mediaDevices.getUserMedia({
-  audio: true
+
+// PeerJS akışını kullanan mevcut VoiceContext için bu yardımcılar isteğe bağlı
+// olarak kullanılabilir; modül yüklenirken medya izni istemezler.
+export const requestMicrophoneStream = () => navigator.mediaDevices.getUserMedia({
+  audio: true,
+  video: false,
 });
-navigator.mediaDevices.getDisplayMedia()
+
+export const requestCameraStream = () => navigator.mediaDevices.getUserMedia({
+  audio: false,
+  video: true,
+});
+
+export const requestScreenStream = () => navigator.mediaDevices.getDisplayMedia({
+  video: true,
+  audio: false,
+});

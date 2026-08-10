@@ -1,11 +1,11 @@
-﻿import { useState } from 'react';
-import { SocketProvider } from './context/SocketContext';
+﻿import { useState, useEffect } from 'react';
+import { SocketProvider, useSocket } from './context/SocketContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ServerProvider, useServer } from './context/ServerContext';
-import { VoiceProvider } from './context/VoiceContext';
+import { VoiceProvider, useVoice } from './context/VoiceContext';
 import { DMProvider } from './context/DMContext';
 import { FriendsProvider } from './context/FriendsContext';
-import { Toaster } from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 
 import AuthScreen from './components/auth/AuthScreen';
 import ServerList from './components/layout/ServerList';
@@ -16,25 +16,75 @@ import VoicePanel from './components/voice/VoicePanel';
 import DMList from './components/dm/DMList';
 import DMArea from './components/dm/DMArea';
 import FriendsList from './components/friends/FriendsList';
-import UserProfile from './components/profile/UserProfile'; // Profilimizi içe aktardık
+import UserProfile from './components/profile/UserProfile';
+import NotificationCenter from './components/notifications/NotificationCenter';
 
 function AppContent() {
   const { user } = useAuth();
-  const { currentServer, currentChannel } = useServer();
+  const { socket } = useSocket();
+  const { currentServer, currentChannel, setCurrentServer, setCurrentChannel, setServers } = useServer();
+  const { activeVoiceChannel, leaveVoiceChannel } = useVoice();
   const [viewMode, setViewMode] = useState('dms'); 
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const removeServerFromView = ({ serverId, reason }) => {
+      setServers(previous => previous.filter(server => server.id !== serverId));
+      if (currentServer?.id !== serverId) return;
+
+      if (activeVoiceChannel?.serverId === serverId) leaveVoiceChannel();
+      setCurrentServer(null);
+      setCurrentChannel(null);
+      setViewMode('dms');
+      if (reason) toast.error(reason);
+    };
+
+    const handleKicked = ({ serverId, reason }) => removeServerFromView({
+      serverId,
+      reason: reason ? `Sunucudan çıkarıldın: ${reason}` : 'Bir moderatör seni sunucudan çıkardı.',
+    });
+    const handleDeleted = ({ serverId }) => removeServerFromView({ serverId, reason: 'Bu sunucu silindi.' });
+    const handleModerated = ({ serverId, action, byUsername }) => {
+      if (currentServer?.id !== serverId) return;
+      const labels = {
+        timeout: 'zaman aşımı uyguladı',
+        untimeout: 'zaman aşımını kaldırdı',
+        mute: 'mikrofonunu susturdu',
+        unmute: 'mikrofonunun sesini açtı',
+        deafen: 'seni sağırlaştırdı',
+        undeafen: 'sağırlaştırmayı kaldırdı',
+      };
+      if (action === 'timeout' && activeVoiceChannel?.serverId === serverId) leaveVoiceChannel();
+      toast(action === 'timeout' ? `Bir moderatör ${labels[action] || 'işlem uyguladı'}.` : `${byUsername || 'Bir moderatör'} ${labels[action] || 'işlem uyguladı'}.`);
+    };
+    const handleUpdated = ({ server }) => {
+      if (!server?.id) return;
+      setServers(previous => previous.map(item => item.id === server.id ? { ...item, ...server } : item));
+      if (currentServer?.id === server.id) setCurrentServer(previous => ({ ...previous, ...server }));
+    };
+
+    socket.on('server:kicked', handleKicked);
+    socket.on('server:deleted', handleDeleted);
+    socket.on('server:updated', handleUpdated);
+    socket.on('server:moderated', handleModerated);
+    return () => {
+      socket.off('server:kicked', handleKicked);
+      socket.off('server:deleted', handleDeleted);
+      socket.off('server:updated', handleUpdated);
+      socket.off('server:moderated', handleModerated);
+    };
+  }, [socket, currentServer?.id, activeVoiceChannel?.serverId, leaveVoiceChannel, setCurrentChannel, setCurrentServer, setServers]);
 
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#1E1F22] text-[#DBDEE1] font-sans selection:bg-[#5865F2] selection:text-white">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#0f172a] text-[#e2e8f0] font-sans selection:bg-[#2563eb] selection:text-white">
+      <NotificationCenter />
       
-      {/* 1. SÜTUN: EN SOL BAR (72px) - Sunucular */}
       <ServerList viewMode={viewMode} setViewMode={setViewMode} />
 
-      {/* 2. SÜTUN: ORTA YAN BAR (240px) */}
-      <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 rounded-tl-lg overflow-hidden border-r border-[#1E1F22]/50 shadow-sm">
-        
-        {/* Üst Kısım: Kanallar veya DM/Arkadaş Listesi */}
+      <div className="flex flex-col w-[256px] bg-[#151b27] flex-shrink-0 overflow-hidden border-r border-white/[0.06]">
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           {viewMode === 'servers' ? (
             currentServer ? <ChannelList /> : null
@@ -42,19 +92,14 @@ function AppContent() {
             <DMList setViewMode={setViewMode} />
           )}
         </div>
-
-        {/* ALT KISIM: İŞTE YENİ PROFİL BARIMIZ BURADA! */}
         <UserProfile />
-
       </div>
 
-      {/* 3. SÜTUN: ANA İÇERİK (Esnek Genişlik) - Sohbet Ekranı */}
-      <div className="flex flex-col flex-1 min-w-0 bg-[#313338] relative">
+      <div className="flex flex-col flex-1 min-w-0 bg-[#111827] relative">
         {viewMode === 'servers' ? (
           currentChannel ? (
             <>
               <ChatArea />
-              <VoicePanel />
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[#949BA4] select-none">
@@ -70,11 +115,14 @@ function AppContent() {
         ) : (
           <DMArea />
         )}
+
+        {/* Ses paneli görünümden bağımsız olarak orta sütunda kalır. Böylece
+            kullanıcı DM veya Arkadaşlar ekranına geçse de aramayı yönetebilir. */}
+        <VoicePanel />
       </div>
 
-      {/* 4. SÜTUN: SAĞ BAR (240px) - Üye Listesi */}
       {viewMode === 'servers' && currentChannel && (
-        <div className="flex flex-col w-[240px] bg-[#2B2D31] flex-shrink-0 border-l border-[#1E1F22]/50">
+        <div className="flex flex-col w-[256px] bg-[#151b27] flex-shrink-0 border-l border-white/[0.06]">
           <MemberList />
         </div>
       )}
@@ -85,8 +133,8 @@ function AppContent() {
 
 function App() {
   return (
-    <SocketProvider>
-      <AuthProvider>
+    <AuthProvider>
+      <SocketProvider>
         <FriendsProvider>
           <DMProvider>
             <ServerProvider>
@@ -97,8 +145,8 @@ function App() {
             </ServerProvider>
           </DMProvider>
         </FriendsProvider>
-      </AuthProvider>
-    </SocketProvider>
+      </SocketProvider>
+    </AuthProvider>
   );
 }
 

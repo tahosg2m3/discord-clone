@@ -32,6 +32,24 @@ export default function DMList({ setViewMode }) {
     };
   }, [socket, user]);
 
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const handleExternalDMOpen = (event) => {
+      const requestedConversation = event.detail?.conversation;
+      fetchDMConversations(user.id)
+        .then((conversations) => {
+          setDms(conversations);
+          const completeConversation = conversations.find((conversation) => conversation.id === requestedConversation?.id);
+          if (completeConversation) setActiveDM(completeConversation);
+        })
+        .catch(console.error);
+    };
+
+    window.addEventListener('discord:navigate-to-dm', handleExternalDMOpen);
+    return () => window.removeEventListener('discord:navigate-to-dm', handleExternalDMOpen);
+  }, [setActiveDM, user?.id]);
+
   const handleSelectDM = (dm) => {
     // Eski DM odasından çık
     if (activeDM?.channelId && socket) {

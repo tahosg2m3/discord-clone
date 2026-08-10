@@ -10,6 +10,8 @@ body {
                'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: #0f172a;
+  color: #e2e8f0;
 }
 
 /* Custom scrollbar */
@@ -23,10 +25,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1a1b1e;
+  background: #334155;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2e3035;
+  background: #475569;
 }

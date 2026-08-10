@@ -2,6 +2,7 @@
 import { Plus, Compass, MessageSquare, Users } from 'lucide-react';
 import { useServer } from '../../context/ServerContext';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { fetchServers } from '../../services/api';
 import ServerIcon from '../server/ServerIcon';
 import CreateServerModal from '../server/CreateServerModal';
@@ -10,12 +11,45 @@ import JoinServerModal from '../server/JoinServerModal';
 export default function ServerList({ viewMode, setViewMode }) {
   const { servers, setServers, currentServer, setCurrentServer } = useServer();
   const { user } = useAuth();
+  const { socket } = useSocket();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
 
   useEffect(() => {
     if (user?.id) fetchServers(user.id).then(setServers).catch(console.error);
   }, [setServers, user]);
+
+  useEffect(() => {
+    const navigateToDM = () => {
+      setCurrentServer(null);
+      setViewMode('dms');
+    };
+
+    window.addEventListener('discord:navigate-to-dm', navigateToDM);
+    return () => window.removeEventListener('discord:navigate-to-dm', navigateToDM);
+  }, [setCurrentServer, setViewMode]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+
+    const handleServerUpdated = ({ server }) => {
+      if (!server?.id) return;
+      setServers((previous) => previous.map((candidate) => (candidate.id === server.id ? { ...candidate, ...server } : candidate)));
+      setCurrentServer((current) => (current?.id === server.id ? { ...current, ...server } : current));
+    };
+    const handleServerDeleted = ({ serverId }) => {
+      if (!serverId) return;
+      setServers((previous) => previous.filter((server) => server.id !== serverId));
+      setCurrentServer((current) => (current?.id === serverId ? null : current));
+    };
+
+    socket.on('server:updated', handleServerUpdated);
+    socket.on('server:deleted', handleServerDeleted);
+    return () => {
+      socket.off('server:updated', handleServerUpdated);
+      socket.off('server:deleted', handleServerDeleted);
+    };
+  }, [setCurrentServer, setServers, socket]);
 
   return (
     <div className="w-[72px] bg-[#1E1F22] flex flex-col items-center pt-3 space-y-0 h-full overflow-y-auto no-scrollbar shrink-0 relative z-20">

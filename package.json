@@ -23,18 +23,31 @@
       "electron/**/*",
       "frontend/dist/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!data.json",
+          "!data.sqlite",
+          "!data.sqlite-*",
+          "!datayedek.json",
+          "!datayedek2.json",
+          "!.env",
+          "!uploads/**/*"
+        ]
+      }
+    ],
     "win": {
-      "target": ["nsis"],
-      "icon": "electron/icon.ico"
+      "target": ["nsis"]
     },
     "mac": {
       "target": ["dmg"],
-      "icon": "electron/icon.icns",
       "category": "public.app-category.social-networking"
     },
     "linux": {
       "target": ["AppImage", "deb"],
-      "icon": "electron/icon.png",
       "category": "Network"
     }
   },

@@ -1,174 +1,327 @@
-import { useState } from 'react';
-import { X, Trash2, Save, AlertTriangle } from 'lucide-react';
-import { updateServer, deleteServer } from '../../services/api';
-import { useServer } from '../../context/ServerContext';
-import { useAuth } from '../../context/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Crown,
+  Image,
+  Save,
+  Settings,
+  Shield,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
+import { useServer } from '../../context/ServerContext';
+import { getColorForString } from '../../utils/colors';
+import MemberManagementModal from './MemberManagementModal';
+import RoleManagementModal from './RoleManagementModal';
+import {
+  getServerMembers,
+  getServerRoles,
+  permissionsToMap,
+  removeServer,
+  transferServerOwnership,
+  unwrapMembers,
+  unwrapRoles,
+  updateServerDetails,
+} from './serverManagementApi';
+
+const tabs = [
+  { id: 'overview', label: 'Genel Bakış', icon: Settings },
+  { id: 'roles', label: 'Roller', icon: Shield },
+  { id: 'members', label: 'Üyeler', icon: Users },
+  { id: 'delete', label: 'Tehlikeli Bölge', icon: Trash2, danger: true },
+];
 
 export default function ServerSettingsModal({ onClose }) {
-  const { currentServer, setServers, setCurrentServer } = useServer();
+  const { currentServer, setCurrentServer, setCurrentChannel, setServers } = useServer();
   const { user } = useAuth();
-  
-  const [serverName, setServerName] = useState(currentServer.name);
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'delete'
+  const [activeTab, setActiveTab] = useState('overview');
+  const [serverName, setServerName] = useState(currentServer?.name || '');
+  const [serverIcon, setServerIcon] = useState(currentServer?.icon || '');
+  const [roles, setRoles] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [permissions, setPermissions] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [transferTargetId, setTransferTargetId] = useState('');
 
-  const isOwner = currentServer.creatorId === user.id;
+  const isOwner = Boolean(currentServer && user?.id && currentServer.creatorId === user.id);
+  const serverColor = useMemo(() => getColorForString(currentServer?.name || 'Sunucu'), [currentServer?.name]);
 
-  const handleUpdate = async (e) => {
-    e.preventDefault();
-    if (!serverName.trim()) return;
+  useEffect(() => {
+    if (!currentServer?.id) return undefined;
 
+    setServerName(currentServer.name || '');
+    setServerIcon(currentServer.icon || '');
     setIsLoading(true);
-    try {
-      const updated = await updateServer(currentServer.id, { 
-        name: serverName,
-        userId: user.id 
-      });
 
-      // Context'i güncelle
-      setServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
-      setCurrentServer(updated);
-      
-      toast.success('Server updated');
-      onClose();
+    Promise.all([getServerRoles(currentServer.id), getServerMembers(currentServer.id)])
+      .then(([rolePayload, memberPayload]) => {
+        setRoles(unwrapRoles(rolePayload));
+        setMembers(unwrapMembers(memberPayload));
+        setPermissions(permissionsToMap(rolePayload?.currentUserPermissions || rolePayload?.permissions || []));
+      })
+      .catch((error) => {
+        // Sunucu sahibi, rol verisi yüklenmese bile genel ayarları görebilir.
+        console.error('Sunucu ayarları yüklenemedi:', error);
+        toast.error(error.message || 'Sunucu ayarları yüklenemedi.');
+      })
+      .finally(() => setIsLoading(false));
+
+    return undefined;
+  }, [currentServer?.id]);
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  const refreshMembers = async () => {
+    if (!currentServer?.id) return;
+    try {
+      const payload = await getServerMembers(currentServer.id);
+      setMembers(unwrapMembers(payload));
     } catch (error) {
-      toast.error(error.message || 'Failed to update');
+      console.error('Üyeler yenilenemedi:', error);
+    }
+  };
+
+  const handleSaveOverview = async () => {
+    if (!isOwner || !serverName.trim()) return;
+
+    setIsSaving(true);
+    try {
+      const updated = await updateServerDetails(currentServer.id, {
+        name: serverName.trim(),
+        icon: serverIcon.trim(),
+        actorId: user.id,
+      });
+      const nextServer = { ...currentServer, ...(updated.server || updated) };
+      setServers((previous) => previous.map((server) => (server.id === currentServer.id ? nextServer : server)));
+      setCurrentServer(nextServer);
+      toast.success('Sunucu ayarları kaydedildi.');
+    } catch (error) {
+      toast.error(error.message || 'Sunucu ayarları kaydedilemedi.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
+    }
+  };
+
+  const copyInvite = async () => {
+    if (!currentServer?.inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(currentServer.inviteCode);
+      setCopied(true);
+      toast.success('Davet kodu kopyalandı.');
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      toast.error('Davet kodu kopyalanamadı.');
     }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`Are you sure you want to delete ${currentServer.name}? This cannot be undone.`)) return;
+    if (!isOwner) return;
+    const confirmation = window.prompt(`Sunucuyu silmek için “${currentServer.name}” yaz.`);
+    if (confirmation !== currentServer.name) {
+      if (confirmation !== null) toast.error('Sunucu adı eşleşmiyor.');
+      return;
+    }
 
-    setIsLoading(true);
+    setIsSaving(true);
     try {
-      await deleteServer(currentServer.id);
-      
-      setServers(prev => prev.filter(s => s.id !== currentServer.id));
+      await removeServer(currentServer.id, user.id);
+      setServers((previous) => previous.filter((server) => server.id !== currentServer.id));
       setCurrentServer(null);
-      
-      toast.success('Server deleted');
-      onClose();
+      setCurrentChannel(null);
+      toast.success('Sunucu silindi.');
+      onClose?.();
     } catch (error) {
-      toast.error('Failed to delete server');
+      toast.error(error.message || 'Sunucu silinemedi.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 animate-in fade-in duration-200">
-      <div className="bg-white rounded-lg w-full max-w-2xl h-[500px] flex overflow-hidden shadow-2xl relative">
-        
-        {/* SOL MENÜ */}
-        <div className="w-1/3 bg-gray-100 p-4 flex flex-col">
-          <h2 className="text-xs font-bold text-gray-500 uppercase mb-3 px-2">
-            {currentServer.name}
-          </h2>
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`text-left px-2 py-1.5 rounded text-sm font-medium mb-1 ${activeTab === 'overview' ? 'bg-gray-200 text-gray-900' : 'text-gray-600 hover:bg-gray-200/50'}`}
-          >
-            Overview
-          </button>
-          
-          {isOwner && (
-            <>
-              <div className="h-px bg-gray-300 my-2" />
-              <button 
-                onClick={() => setActiveTab('delete')}
-                className={`text-left px-2 py-1.5 rounded text-sm font-medium text-red-600 hover:bg-red-50 flex items-center justify-between ${activeTab === 'delete' ? 'bg-red-50' : ''}`}
-              >
-                Delete Server
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </>
-          )}
-        </div>
+  const handleTransferOwnership = async () => {
+    if (!transferTargetId || !isOwner) return;
+    const target = members.find((member) => (member.id || member.userId || member.user?.id) === transferTargetId);
+    const targetName = target?.username || target?.user?.username || 'seçilen üye';
+    if (!window.confirm(`Sunucu sahipliğini ${targetName} kullanıcısına devretmek istediğine emin misin? Bu işlemden sonra ayarları değiştiremezsin.`)) return;
 
-        {/* SAĞ İÇERİK */}
-        <div className="flex-1 bg-white p-10 flex flex-col relative">
-          <button 
-            onClick={onClose}
-            className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 flex flex-col items-center"
-          >
-            <div className="border-2 border-gray-400 rounded-full p-1 mb-1">
-               <X className="w-4 h-4" />
+    setIsSaving(true);
+    try {
+      const updated = await transferServerOwnership(currentServer.id, transferTargetId);
+      const nextServer = { ...currentServer, ...(updated.server || updated) };
+      setServers((previous) => previous.map((server) => (server.id === currentServer.id ? nextServer : server)));
+      setCurrentServer(nextServer);
+      toast.success('Sunucu sahipliği devredildi.');
+      onClose?.();
+    } catch (error) {
+      toast.error(error.message || 'Sunucu sahipliği devredilemedi.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!currentServer) return null;
+
+  if (!isOwner) {
+    return (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+        <div className="w-full max-w-sm rounded-lg border border-black/40 bg-[#313338] p-6 text-center shadow-2xl">
+          <Shield className="mx-auto mb-3 h-10 w-10 text-[#ED4245]" />
+          <h2 className="text-lg font-bold text-[#F2F3F5]">Bu ayarlara erişimin yok</h2>
+          <p className="mt-2 text-sm leading-6 text-[#B5BAC1]">Sunucu ayarlarını yalnızca sunucu sahibi değiştirebilir.</p>
+          <button type="button" onClick={onClose} className="mt-5 rounded bg-[#5865F2] px-4 py-2 text-sm font-medium text-white hover:bg-[#4752C4]">Tamam</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/70 p-3 backdrop-blur-[2px] sm:p-6">
+      <div className="flex h-[min(760px,calc(100vh-24px))] w-full max-w-6xl overflow-hidden rounded-lg border border-black/40 bg-[#313338] shadow-2xl">
+        <aside className="flex w-[205px] shrink-0 flex-col border-r border-black/30 bg-[#2B2D31] px-2 py-5 sm:w-[230px]">
+          <div className="mb-4 px-3">
+            <p className="truncate text-sm font-bold text-[#F2F3F5]">{currentServer.name}</p>
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#949BA4]">Sunucu Ayarları</p>
+          </div>
+
+          <nav className="space-y-0.5">
+            {tabs.map(({ id, label, icon: Icon, danger }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={`flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm font-medium transition ${activeTab === id ? (danger ? 'bg-[#F23F42]/15 text-[#F23F42]' : 'bg-[#404249] text-white') : (danger ? 'text-[#F23F42] hover:bg-[#F23F42]/10' : 'text-[#B5BAC1] hover:bg-[#35373C] hover:text-[#DBDEE1]')}`}
+              >
+                <Icon className="h-4 w-4" />
+                <span className="truncate">{label}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="mt-auto border-t border-black/25 px-3 pt-4">
+            <div className="flex items-center gap-2 text-xs text-[#B5BAC1]">
+              <Crown className="h-4 w-4 text-[#FEE75C]" /> Sunucu sahibi
             </div>
-            <span className="text-[10px] font-bold uppercase">Esc</span>
+          </div>
+        </aside>
+
+        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#313338]">
+          <button type="button" onClick={onClose} title="Kapat" className="absolute right-4 top-4 z-20 rounded-full border border-[#B5BAC1] p-1.5 text-[#B5BAC1] transition hover:border-white hover:text-white">
+            <X className="h-4 w-4" />
           </button>
 
           {activeTab === 'overview' && (
-            <div className="animate-in slide-in-from-right-4 duration-300">
-              <h1 className="text-xl font-bold text-gray-900 mb-6">Server Overview</h1>
-              
-              <div className="flex gap-8">
-                 {/* Icon Placeholder */}
-                 <div className="flex flex-col items-center gap-2">
-                    <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center text-2xl font-bold text-gray-500">
-                        {currentServer.name[0].toUpperCase()}
-                    </div>
-                    <span className="text-xs text-gray-500">Min 128x128</span>
-                 </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 custom-scrollbar sm:px-10">
+              <div className="mx-auto max-w-[650px] pb-20">
+                <h1 className="text-xl font-bold text-[#F2F3F5]">Genel Bakış</h1>
+                <p className="mt-1 text-sm text-[#B5BAC1]">Sunucunun görünen adını, ikonunu ve davetini yönet.</p>
 
-                 {/* Form */}
-                 <form onSubmit={handleUpdate} className="flex-1">
-                    <div className="mb-6">
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
-                            Server Name
-                        </label>
-                        <input
-                            type="text"
-                            value={serverName}
-                            onChange={(e) => setServerName(e.target.value)}
-                            disabled={!isOwner}
-                            className="w-full bg-gray-100 border border-gray-300 rounded p-2 text-gray-900 focus:border-blue-500 focus:outline-none"
-                        />
+                <div className="mt-7 rounded-lg border border-black/25 bg-[#2B2D31] p-5">
+                  <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+                    <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[28px] text-3xl font-bold text-white shadow-lg" style={{ backgroundColor: serverColor }}>
+                      {serverIcon ? <img src={serverIcon} alt="Sunucu ikonu" className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : serverName.slice(0, 2).toUpperCase()}
                     </div>
-                    
-                    {isOwner && (
-                        <div className="bg-gray-50 p-4 rounded-lg mt-10 flex items-center justify-between">
-                            <span className="text-sm text-gray-600">Careful, you have unsaved changes!</span>
-                            <button 
-                                type="submit"
-                                disabled={isLoading || serverName === currentServer.name}
-                                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                                {isLoading ? 'Saving...' : 'Save Changes'}
-                            </button>
-                        </div>
-                    )}
-                 </form>
+                    <div className="min-w-0 flex-1">
+                      <label className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Sunucu adı</label>
+                      <input value={serverName} onChange={(event) => setServerName(event.target.value)} maxLength={100} className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition focus:border-[#00A8FC]" />
+                    </div>
+                  </div>
+
+                  <div className="mt-5">
+                    <label className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]"><Image className="h-3.5 w-3.5" /> Sunucu ikonu bağlantısı</label>
+                    <input value={serverIcon} onChange={(event) => setServerIcon(event.target.value)} placeholder="https://ornek.com/sunucu-ikonu.png" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition placeholder:text-[#72767D] focus:border-[#00A8FC]" />
+                    <p className="mt-2 text-xs leading-5 text-[#949BA4]">Bir resim URL’si yapıştır. Boş bırakırsan sunucu adının baş harfleri kullanılır.</p>
+                  </div>
+                </div>
+
+                <div className="mt-7 rounded-lg border border-black/25 bg-[#2B2D31] p-5">
+                  <h2 className="text-sm font-bold text-[#F2F3F5]">Davet Kodu</h2>
+                  <p className="mt-1 text-xs leading-5 text-[#949BA4]">Bu kodu arkadaşlarınla paylaşarak sunucuya katılmalarını sağlayabilirsin.</p>
+                  <div className="mt-4 flex items-center gap-2 rounded-[4px] bg-[#1E1F22] p-2">
+                    <code className="min-w-0 flex-1 truncate px-2 text-sm font-bold tracking-wider text-[#DBDEE1]">{currentServer.inviteCode || '—'}</code>
+                    <button type="button" onClick={copyInvite} className="flex shrink-0 items-center gap-2 rounded bg-[#5865F2] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#4752C4]">
+                      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} {copied ? 'Kopyalandı' : 'Kopyala'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 flex items-center justify-end border-t border-black/30 bg-[#232428] px-6 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.18)]">
+                <button type="button" onClick={handleSaveOverview} disabled={isSaving || !serverName.trim()} className="flex items-center gap-2 rounded bg-[#23A559] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#1D8046] disabled:cursor-not-allowed disabled:opacity-50">
+                  <Save className="h-4 w-4" /> {isSaving ? 'Kaydediliyor…' : 'Değişiklikleri Kaydet'}
+                </button>
               </div>
             </div>
           )}
 
-          {activeTab === 'delete' && isOwner && (
-             <div className="animate-in slide-in-from-right-4 duration-300">
-                <h1 className="text-xl font-bold text-gray-900 mb-4">Delete Server</h1>
-                <div className="bg-red-50 border border-red-200 rounded p-4 mb-6">
-                    <h3 className="text-red-800 font-bold flex items-center gap-2 mb-2">
-                        <AlertTriangle className="w-5 h-5" />
-                        Warning
-                    </h3>
-                    <p className="text-red-700 text-sm">
-                        Deleting <strong>{currentServer.name}</strong> cannot be undone. All channels, messages, and roles will be lost forever.
-                    </p>
-                </div>
-                
-                <button
-                    onClick={handleDelete}
-                    disabled={isLoading}
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-medium disabled:opacity-50 transition-colors w-full sm:w-auto"
-                >
-                    {isLoading ? 'Deleting...' : 'Delete Server'}
-                </button>
-             </div>
+          {activeTab === 'roles' && (
+            isLoading ? <LoadingState label="Roller yükleniyor…" /> : <RoleManagementModal serverId={currentServer.id} actorId={user.id} roles={roles} onRolesChange={setRoles} isOwner={isOwner} />
           )}
-        </div>
+
+          {activeTab === 'members' && (
+            isLoading ? <LoadingState label="Üyeler yükleniyor…" /> : <MemberManagementModal embedded serverId={currentServer.id} actorId={user.id} roles={roles} members={members} permissions={permissions} isOwner={isOwner} onMembersChange={setMembers} />
+          )}
+
+          {activeTab === 'delete' && (
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 custom-scrollbar sm:px-10">
+              <div className="mx-auto max-w-[650px]">
+                <h1 className="text-xl font-bold text-[#F2F3F5]">Tehlikeli Bölge</h1>
+                <p className="mt-1 text-sm text-[#B5BAC1]">Bu işlemler geri alınamaz.</p>
+                <div className="mt-7 rounded-lg border border-[#F23F42]/60 bg-[#F23F42]/10 p-5">
+                  <div className="flex gap-4">
+                    <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-[#F23F42]" />
+                    <div>
+                      <h2 className="font-bold text-[#F23F42]">Sunucuyu Sil</h2>
+                      <p className="mt-1 text-sm leading-6 text-[#DBDEE1]">Kanallar, mesajlar, roller ve üyelik bilgileri kalıcı olarak silinir. Bu işlem geri alınamaz.</p>
+                      <button type="button" onClick={handleDelete} disabled={isSaving} className="mt-4 rounded bg-[#DA373C] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#A12828] disabled:opacity-50">
+                        <Trash2 className="mr-2 inline h-4 w-4" /> Sunucuyu Sil
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 rounded-lg border border-[#F0B232]/50 bg-[#F0B232]/10 p-5">
+                  <div className="flex gap-4">
+                    <Crown className="mt-0.5 h-6 w-6 shrink-0 text-[#F0B232]" />
+                    <div className="min-w-0 flex-1">
+                      <h2 className="font-bold text-[#F0B232]">Sunucu Sahipliğini Devret</h2>
+                      <p className="mt-1 text-sm leading-6 text-[#DBDEE1]">Başka bir üyeyi yeni sunucu sahibi yap. Devirden sonra bu ayarları değiştirme yetkin kalmaz.</p>
+                      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                        <select value={transferTargetId} onChange={(event) => setTransferTargetId(event.target.value)} className="min-w-0 flex-1 rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]">
+                          <option value="">Yeni sahip seç</option>
+                          {members.filter((member) => !(member.isOwner || (member.id || member.userId || member.user?.id) === user.id)).map((member) => {
+                            const memberId = member.id || member.userId || member.user?.id;
+                            return <option key={memberId} value={memberId}>{member.username || member.user?.username || memberId}</option>;
+                          })}
+                        </select>
+                        <button type="button" onClick={handleTransferOwnership} disabled={isSaving || !transferTargetId} className="shrink-0 rounded bg-[#F0B232] px-4 py-2 text-sm font-medium text-[#1E1F22] transition hover:bg-[#D99B00] disabled:cursor-not-allowed disabled:opacity-50">Sahipliği Devret</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
       </div>
+    </div>
+  );
+}
+
+function LoadingState({ label }) {
+  return (
+    <div className="flex flex-1 items-center justify-center text-sm text-[#949BA4]">
+      <span className="mr-3 h-4 w-4 animate-spin rounded-full border-2 border-[#5865F2] border-t-transparent" />
+      {label}
     </div>
   );
 }

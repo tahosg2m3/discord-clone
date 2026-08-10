@@ -1,12 +1,28 @@
 ﻿const { v4: uuidv4 } = require('uuid');
-const ogs = require('open-graph-scraper');
 const linkify = require('linkify-it')();
 const storage = require('../storage/inMemory'); // Storage'ı dahil ettik
+
+
+// User supplied URLs are never fetched by the backend.  Networked Open Graph
+// scraping permits SSRF and DNS-rebinding attacks, so the message card below
+// is built entirely from locally parsed URL data.
+function createSafeLinkMetadata(value) {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    return {
+      title: url.hostname.replace(/^www\./i, '') || url.href,
+      url: url.href,
+    };
+  } catch {
+    return null;
+  }
+}
 
 class MessageService {
   // Constructor'da artık veri tutmuyoruz, storage kullanacağız.
 
-  async createMessage({ username, content, channelId, userId }) {
+  async createMessage({ username, content, channelId, userId, attachments = [], replyTo = null }) {
     const message = {
       id: uuidv4(),
       username,
@@ -16,26 +32,20 @@ class MessageService {
       timestamp: Date.now(),
       type: 'user',
       isEdited: false,
-      metadata: null
+      metadata: null,
+      attachments: Array.isArray(attachments) ? attachments : [],
+      replyTo: replyTo && typeof replyTo === 'object' ? {
+        id: String(replyTo.id || ''),
+        username: String(replyTo.username || ''),
+        content: String(replyTo.content || '').slice(0, 500),
+      } : null,
+      reactions: {},
+      isPinned: false,
     };
 
-    // Link önizlemesi (Metadata)
+    // URL yerelde ayrıştırılır; backend hiçbir kullanıcı bağlantısına istek atmaz.
     const matches = linkify.match(content);
-    if (matches && matches.length > 0) {
-      try {
-        const { result } = await ogs({ url: matches[0].url, timeout: 2000 });
-        if (result.ogTitle) {
-          message.metadata = {
-            title: result.ogTitle,
-            description: result.ogDescription,
-            image: result.ogImage?.[0]?.url,
-            url: matches[0].url
-          };
-        }
-      } catch (err) {
-        console.log('OGS Error (Ignored):', err.message);
-      }
-    }
+    if (matches && matches.length > 0) message.metadata = createSafeLinkMetadata(matches[0].url);
 
     // Storage'a kaydet (Bu sayede kalıcı olur)
     storage.addChannelMessage(channelId, message);

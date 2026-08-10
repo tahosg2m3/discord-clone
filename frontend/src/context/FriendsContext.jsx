@@ -2,6 +2,14 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { useSocket } from './SocketContext';
 import { useAuth } from './AuthContext';
+import {
+  acceptFriendRequest as acceptFriendRequestApi,
+  fetchFriends,
+  fetchPendingRequests,
+  rejectFriendRequest as rejectFriendRequestApi,
+  removeFriend as removeFriendApi,
+  sendFriendRequest as sendFriendRequestApi,
+} from '../services/api';
 
 const FriendsContext = createContext(null);
 
@@ -43,8 +51,7 @@ export const FriendsProvider = ({ children }) => {
 
   const loadFriends = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/friends/${user.id}`);
-      const data = await response.json();
+      const data = await fetchFriends(user.id);
       setFriends(data);
     } catch (error) {
       console.error('Failed to load friends:', error);
@@ -53,32 +60,16 @@ export const FriendsProvider = ({ children }) => {
 
   const loadPendingRequests = async () => {
     try {
-      const response = await fetch(
-        `http://localhost:3001/api/friends/${user.id}/pending`
-      );
-      const data = await response.json();
+      const data = await fetchPendingRequests(user.id);
       setPendingRequests(data);
     } catch (error) {
       console.error('Failed to load pending requests:', error);
     }
   };
 
-  const sendFriendRequest = async (toUserId) => {
+  const sendFriendRequest = async (targetUsername) => {
     try {
-      const response = await fetch('http://localhost:3001/api/friends/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fromUserId: user.id,
-          toUserId,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error);
-      }
-
+      await sendFriendRequestApi(user.id, targetUsername);
       return true;
     } catch (error) {
       console.error('Failed to send friend request:', error);
@@ -88,11 +79,7 @@ export const FriendsProvider = ({ children }) => {
 
   const acceptFriendRequest = async (requestId) => {
     try {
-      await fetch('http://localhost:3001/api/friends/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId }),
-      });
+      await acceptFriendRequestApi(requestId);
 
       await loadFriends();
       await loadPendingRequests();
@@ -103,11 +90,7 @@ export const FriendsProvider = ({ children }) => {
 
   const rejectFriendRequest = async (requestId) => {
     try {
-      await fetch('http://localhost:3001/api/friends/reject', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId }),
-      });
+      await rejectFriendRequestApi(requestId);
 
       await loadPendingRequests();
     } catch (error) {
@@ -117,13 +100,12 @@ export const FriendsProvider = ({ children }) => {
 
   const removeFriend = async (friendId) => {
     try {
-      await fetch(`http://localhost:3001/api/friends/${user.id}/${friendId}`, {
-        method: 'DELETE',
-      });
-
-      await loadFriends();
+      await removeFriendApi(user.id, friendId);
+      setFriends((previous) => previous.filter((friend) => friend.id !== friendId));
+      return true;
     } catch (error) {
       console.error('Failed to remove friend:', error);
+      throw error;
     }
   };
 

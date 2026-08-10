@@ -1,124 +1,65 @@
-// frontend/src/components/voice/VideoGrid.jsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import { MonitorOff } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
-import { Maximize2, Minimize2, X } from 'lucide-react';
 
-const VideoPlayer = ({ stream, userId, isDeafened, onClick, isMaximized, isLocal }) => {
+function StreamVideo({ stream, label, muted }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
+    if (videoRef.current) videoRef.current.srcObject = stream;
   }, [stream]);
 
-  // isDeafened true ise ve yayın yerel değilse sesi kapat
-  useEffect(() => {
-    if (videoRef.current) {
-      // Kendi sesimizi duymak istemeyiz, o yüzden local ise muted=true
-      if (isLocal) {
-        videoRef.current.muted = true;
-      } else {
-        videoRef.current.muted = isDeafened;
-      }
-    }
-  }, [isDeafened, isLocal]);
-
   return (
-    <div 
-      onClick={onClick}
-      className={`relative bg-black rounded-lg overflow-hidden shadow-lg group cursor-pointer transition-all
-        ${isMaximized ? 'fixed inset-4 z-50 border-2 border-blue-500' : 'aspect-video hover:ring-2 hover:ring-blue-500'}
-      `}
-    >
+    <div className="relative aspect-video overflow-hidden rounded-xl border border-white/[0.08] bg-black shadow-lg">
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        className={`w-full h-full ${isMaximized ? 'object-contain' : 'object-cover'}`}
+        muted={muted}
+        className="h-full w-full object-contain"
       />
-      
-      {/* Kullanıcı Adı */}
-      <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-white text-xs backdrop-blur-sm">
-        {userId} {isLocal ? '(You)' : ''}
-      </div>
-
-      {/* Büyütme İkonu */}
-      {!isMaximized && (
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded text-white">
-            <Maximize2 className="w-4 h-4" />
-        </div>
-      )}
-      
-      {/* Küçültme İkonu */}
-      {isMaximized && (
-        <div className="absolute top-2 right-2 bg-black/50 p-2 rounded-full text-white hover:bg-black/70">
-            <Minimize2 className="w-6 h-6" />
-        </div>
-      )}
+      <span className="absolute bottom-2 left-2 rounded bg-black/65 px-2 py-1 text-[11px] font-medium text-white">
+        {label}
+      </span>
     </div>
   );
-};
+}
 
-export default function VideoGrid({ onClose }) {
-  const { remoteStreams, localStream, isDeafened, isCameraOn, isSharingScreen } = useVoice();
-  const [maximizedUser, setMaximizedUser] = useState(null);
+export default function VideoGrid() {
+  const {
+    cameraStream,
+    screenStream,
+    remoteStreams,
+    isDeafened,
+    toggleScreenShare,
+  } = useVoice();
 
-  // Gösterilecek bir şey var mı? (Kamera açık mı, Ekran paylaşımı var mı veya karşıdan yayın var mı?)
-  const shouldShowLocal = localStream && (isCameraOn || isSharingScreen);
-  const hasRemote = Object.keys(remoteStreams).length > 0;
-
-  if (!shouldShowLocal && !hasRemote) return null;
-
-  const toggleMaximize = (id) => {
-    setMaximizedUser(maximizedUser === id ? null : id);
-  };
+  const remoteVideoStreams = Object.entries(remoteStreams).filter(
+    ([, stream]) => stream.getVideoTracks().length > 0,
+  );
 
   return (
-    <div className="relative bg-gray-800 p-4 border-b border-gray-700 min-h-[200px] flex flex-col">
-        {onClose && (
-            <button 
-                onClick={onClose}
-                className="absolute top-2 right-2 z-10 p-1 bg-black/50 text-white rounded hover:bg-black/70"
-            >
-                <X className="w-5 h-5" />
-            </button>
+    <div className="mb-4 rounded-xl border border-white/[0.06] bg-[#0f172a] p-3">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#94a3b8]">Yayınlar</span>
+        {screenStream && (
+          <button
+            type="button"
+            onClick={toggleScreenShare}
+            className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-[#fca5a5] hover:bg-white/[0.06]"
+          >
+            <MonitorOff className="h-3.5 w-3.5" /> Yayını durdur
+          </button>
         )}
-        
-        <h3 className="text-gray-400 text-xs uppercase font-bold mb-3">Video / Screenshare</h3>
+      </div>
 
-        <div className={`grid gap-4 ${maximizedUser ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'}`}>
-            
-            {/* Kendi Yayınımız */}
-            {shouldShowLocal && (
-                 <VideoPlayer
-                    key="local"
-                    userId="You"
-                    stream={localStream}
-                    isDeafened={isDeafened}
-                    isLocal={true}
-                    onClick={() => toggleMaximize('local')}
-                    isMaximized={maximizedUser === 'local'}
-                 />
-            )}
-
-            {/* Diğer Yayınlar */}
-            {Object.entries(remoteStreams).map(([userId, stream]) => {
-                if (maximizedUser && maximizedUser !== userId) return null;
-
-                return (
-                    <VideoPlayer
-                        key={userId}
-                        userId={userId}
-                        stream={stream}
-                        isDeafened={isDeafened}
-                        isLocal={false}
-                        onClick={() => toggleMaximize(userId)}
-                        isMaximized={maximizedUser === userId}
-                    />
-                );
-            })}
-        </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {cameraStream && !screenStream && <StreamVideo stream={cameraStream} label="Kameran" muted />}
+        {screenStream && <StreamVideo stream={screenStream} label="Senin yayının" muted />}
+        {remoteVideoStreams.map(([userId, stream]) => (
+          <StreamVideo key={userId} stream={stream} label={userId} muted />
+        ))}
+      </div>
     </div>
   );
 }

@@ -4,9 +4,15 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { requireAuth } = require('../middleware/auth');
 
 // Upload klasörünü oluştur
-const uploadDir = path.join(__dirname, '../../uploads');
+// Electron paketi kaynak dizinine yazılamaz. APP_DATA_DIR paketli sürümde
+// kullanıcıya ait yazılabilir klasörü işaret eder; geliştirmede mevcut uploads
+// klasörünü kullanmaya devam ederiz.
+const uploadDir = process.env.APP_DATA_DIR
+  ? path.join(path.resolve(process.env.APP_DATA_DIR), 'uploads')
+  : path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -39,6 +45,9 @@ const upload = multer({
     }
   }
 });
+
+// Yüklemeler yalnızca giriş yapmış kullanıcılar tarafından yapılabilir.
+router.use(requireAuth);
 
 // Upload single file
 router.post('/file', upload.single('file'), (req, res) => {

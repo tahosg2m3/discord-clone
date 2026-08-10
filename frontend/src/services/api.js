@@ -1,11 +1,13 @@
 ﻿const API_URL = 'http://localhost:3001/api';
 
+const RUNTIME_API_URL = import.meta.env.VITE_API_URL || API_URL;
+
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('chat_token');
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+  const response = await fetch(`${RUNTIME_API_URL}${endpoint}`, { ...options, headers });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || 'Request failed');
@@ -14,9 +16,61 @@ async function request(endpoint, options = {}) {
 }
 
 // Auth
-export const loginUser = (data) => request('/auth/login', { method: 'POST', body: JSON.stringify(data) });
-export const registerUser = (data) => request('/auth/register', { method: 'POST', body: JSON.stringify(data) });
+export const loginUser = (data) =>
+  request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const verifyTwoFactorCode = (data) =>
+  request('/auth/verify-2fa', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const resendTwoFactorCode = (data) =>
+  request('/auth/resend-2fa', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const registerUser = (data) =>
+  request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
 export const verifyToken = () => request('/auth/verify');
+
+export const requestPasswordReset = (email) => request('/auth/request-password-reset', {
+  method: 'POST',
+  body: JSON.stringify({ email }),
+});
+
+export const resendPasswordReset = (resetTicket) => request('/auth/resend-password-reset', {
+  method: 'POST',
+  body: JSON.stringify({ resetTicket }),
+});
+
+export const resetPassword = (data) => request('/auth/reset-password', {
+  method: 'POST',
+  body: JSON.stringify(data),
+});
+
+export const requestEmailChange = (data) => request('/auth/request-email-change', {
+  method: 'POST',
+  body: JSON.stringify(data),
+});
+
+export const resendEmailChange = (emailChangeTicket) => request('/auth/resend-email-change', {
+  method: 'POST',
+  body: JSON.stringify({ emailChangeTicket }),
+});
+
+export const confirmEmailChange = (data) => request('/auth/confirm-email-change', {
+  method: 'POST',
+  body: JSON.stringify(data),
+});
 
 // Servers
 export const fetchServers = (userId) => request(`/servers?userId=${userId}`);
@@ -45,6 +99,7 @@ export const fetchPendingRequests = (userId) => request(`/friends/${userId}/pend
 export const sendFriendRequest = (fromUserId, targetUsername) => request('/friends/request', { method: 'POST', body: JSON.stringify({ fromUserId, targetUsername }) });
 export const acceptFriendRequest = (requestId) => request('/friends/accept', { method: 'POST', body: JSON.stringify({ requestId }) });
 export const rejectFriendRequest = (requestId) => request('/friends/reject', { method: 'POST', body: JSON.stringify({ requestId }) });
+export const removeFriend = (userId, friendId) => request(`/friends/${userId}/${friendId}`, { method: 'DELETE' });
 
 // DM
 export const fetchDMConversations = (userId) => request(`/dm/${userId}`);

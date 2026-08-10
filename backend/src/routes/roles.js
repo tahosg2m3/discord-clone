@@ -1,0 +1,231 @@
+const express = require('express');
+
+const storage = require('../storage/inMemory');
+const { requireAuth } = require('../middleware/auth');
+const { requireServerMember, requireServerOwner } = require('../middleware/authorization');
+const { disconnectUserFromServerVoice } = require('../sockets/handlers/voiceHandler');
+
+const router = express.Router();
+
+const MODERATION_ACTIONS = {
+  kick: { permission: 'KICK_MEMBERS' },
+  mute: { permission: 'MUTE_MEMBERS', changes: { serverMuted: true } },
+  unmute: { permission: 'MUTE_MEMBERS', changes: { serverMuted: false } },
+  deafen: { permission: 'DEAFEN_MEMBERS', changes: { serverDeafened: true } },
+  undeafen: { permission: 'DEAFEN_MEMBERS', changes: { serverDeafened: false } },
+  disconnect: { permission: 'MOVE_MEMBERS' },
+  timeout: { permission: 'MODERATE_MEMBERS', timeout: true },
+  untimeout: { permission: 'MODERATE_MEMBERS', changes: { timeoutUntil: null } },
+};
+
+function emitRolesChanged(req, serverId) {
+  req.app.get('io')?.to(`server:${serverId}`).emit('roles:changed', {
+    serverId,
+    roles: storage.getServerRoles(serverId),
+  });
+}
+
+function emitMemberUpdated(req, serverId, userId) {
+  const member = storage.getServerMemberDetails(serverId, userId);
+  req.app.get('io')?.to(`server:${serverId}`).emit('server:member-updated', { serverId, member });
+  req.app.get('io')?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
+  return member;
+}
+
+router.use(requireAuth);
+
+router.get('/:serverId/roles', requireServerMember, (req, res) => {
+  const serverId = req.params.serverId;
+  return res.json({
+    roles: storage.getServerRoles(serverId),
+    permissions: storage.getAllPermissions(),
+    currentUserPermissions: storage.getMemberPermissions(serverId, req.user.id),
+    isOwner: req.server.creatorId === req.user.id,
+  });
+});
+
+router.post('/:serverId/roles', requireServerOwner, (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name || name.length > 100) return res.status(400).json({ error: 'Rol adı 1-100 karakter olmalıdır.' });
+
+  const role = storage.createServerRole(req.params.serverId, {
+    name,
+    color: req.body.color,
+    permissions: req.body.permissions,
+  });
+  if (!role) return res.status(400).json({ error: 'Rol oluşturulamadı.' });
+
+  emitRolesChanged(req, req.params.serverId);
+  return res.status(201).json({ role });
+});
+
+router.patch('/:serverId/roles/reorder', requireServerOwner, (req, res) => {
+  const roles = storage.reorderServerRoles(req.params.serverId, req.body.roleIds);
+  if (!roles) return res.status(400).json({ error: 'Rol sırası geçersiz.' });
+  emitRolesChanged(req, req.params.serverId);
+  return res.json({ roles });
+});
+
+router.put('/:serverId/roles/reorder', requireServerOwner, (req, res) => {
+  const roles = storage.reorderServerRoles(req.params.serverId, req.body.roleIds);
+  if (!roles) return res.status(400).json({ error: 'Rol sırası geçersiz.' });
+  emitRolesChanged(req, req.params.serverId);
+  return res.json({ roles });
+});
+
+router.patch('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
+  const serverId = req.params.serverId;
+  const role = storage.getServerRole(serverId, req.params.roleId);
+  if (!role) return res.status(404).json({ error: 'Rol bulunamadı.' });
+
+  if (role.isDefault) {
+    const allowedKeys = new Set(['permissions']);
+    if (Object.keys(req.body).some(key => !allowedKeys.has(key))) {
+      return res.status(400).json({ error: '@everyone rolünde yalnızca izinler değiştirilebilir.' });
+    }
+  }
+
+  if (req.body.position !== undefined && !role.isDefault) {
+    const currentIds = storage.getServerRoles(serverId)
+      .filter(item => !item.isDefault)
+      .sort((first, second) => first.position - second.position)
+      .map(item => item.id);
+    const currentIndex = currentIds.indexOf(role.id);
+    const requestedIndex = Math.max(0, Math.min(currentIds.length - 1, Number(req.body.position) - 1));
+    if (!Number.isInteger(requestedIndex)) return res.status(400).json({ error: 'Rol konumu geçersiz.' });
+    currentIds.splice(currentIndex, 1);
+    currentIds.splice(requestedIndex, 0, role.id);
+    storage.reorderServerRoles(serverId, currentIds);
+  }
+
+  const updated = storage.updateServerRole(serverId, req.params.roleId, {
+    name: req.body.name,
+    color: req.body.color,
+    permissions: req.body.permissions,
+  });
+  if (!updated) return res.status(400).json({ error: 'Rol güncellenemedi.' });
+
+  emitRolesChanged(req, serverId);
+  req.app.get('io')?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
+  return res.json({ role: updated });
+});
+
+router.delete('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
+  if (!storage.deleteServerRole(req.params.serverId, req.params.roleId)) {
+    return res.status(400).json({ error: '@everyone rolü silinemez veya rol bulunamadı.' });
+  }
+  emitRolesChanged(req, req.params.serverId);
+  req.app.get('io')?.to(`server:${req.params.serverId}`).emit('server:members-changed', { serverId: req.params.serverId });
+  return res.json({ success: true });
+});
+
+router.get('/:serverId/members/:userId/permissions', requireServerMember, (req, res) => {
+  const member = storage.getServerMemberDetails(req.params.serverId, req.params.userId);
+  if (!member) return res.status(404).json({ error: 'Üye bulunamadı.' });
+  return res.json({
+    userId: req.params.userId,
+    roleIds: member.roleIds,
+    permissions: member.permissions,
+    isOwner: member.isOwner,
+  });
+});
+
+router.patch('/:serverId/members/:userId/roles', requireServerOwner, (req, res) => {
+  if (!storage.isServerMember(req.params.serverId, req.params.userId)) {
+    return res.status(404).json({ error: 'Üye bulunamadı.' });
+  }
+  if (!Array.isArray(req.body.roleIds)) return res.status(400).json({ error: 'roleIds bir dizi olmalıdır.' });
+
+  const member = storage.setMemberRoles(req.params.serverId, req.params.userId, req.body.roleIds);
+  if (!member) return res.status(400).json({ error: 'Rol atamaları geçersiz.' });
+  emitMemberUpdated(req, req.params.serverId, req.params.userId);
+  return res.json({ member });
+});
+
+router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, res) => {
+  const serverId = req.params.serverId;
+  const targetUserId = req.params.userId;
+  const action = String(req.body.action || '').toLowerCase();
+  const definition = MODERATION_ACTIONS[action];
+
+  if (!definition) return res.status(400).json({ error: 'Geçersiz moderasyon işlemi.' });
+  if (!storage.isServerMember(serverId, targetUserId)) return res.status(404).json({ error: 'Üye bulunamadı.' });
+  if (!storage.canModerateMember(serverId, req.user.id, targetUserId, definition.permission)) {
+    return res.status(403).json({ error: 'Bu üyeyi yönetmek için yetkin veya rol hiyerarşin yeterli değil.' });
+  }
+
+  const io = req.app.get('io');
+  const reason = String(req.body.reason || '').trim().slice(0, 500) || null;
+
+  if (action === 'kick') {
+    disconnectUserFromServerVoice(io, serverId, targetUserId);
+    storage.removeServerMember(serverId, targetUserId);
+    io?.in(`user:${targetUserId}`).socketsLeave(`server:${serverId}`);
+    io?.to(`user:${targetUserId}`).emit('server:kicked', {
+      serverId,
+      byUsername: req.user.username,
+      reason,
+    });
+    io?.to(`user:${targetUserId}`).emit('voice:moderated', {
+      action: 'disconnect',
+      serverId,
+      byUsername: req.user.username,
+    });
+    io?.to(`server:${serverId}`).emit('server:member-kicked', { serverId, userId: targetUserId });
+    io?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
+    return res.json({ success: true, action });
+  }
+
+  if (definition.changes || definition.timeout) {
+    let changes = definition.changes;
+    if (definition.timeout) {
+      const durationMinutes = Number(req.body.durationMinutes);
+      if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 10080) {
+        return res.status(400).json({ error: 'Susturma süresi 1 ile 10080 dakika arasında olmalıdır.' });
+      }
+      changes = { timeoutUntil: Date.now() + (durationMinutes * 60 * 1000) };
+    }
+
+    const state = storage.setMemberModerationState(serverId, targetUserId, changes, req.user.id);
+    const member = emitMemberUpdated(req, serverId, targetUserId);
+    if (action === 'timeout') {
+      disconnectUserFromServerVoice(io, serverId, targetUserId);
+      io?.to(`user:${targetUserId}`).emit('voice:moderated', {
+        action: 'disconnect',
+        serverId,
+        byUsername: req.user.username,
+        reason,
+        state,
+      });
+    }
+    io?.to(`user:${targetUserId}`).emit('server:moderated', {
+      action,
+      serverId,
+      byUsername: req.user.username,
+      reason,
+      state,
+    });
+    if (!definition.timeout && action !== 'untimeout') {
+      io?.to(`user:${targetUserId}`).emit('voice:moderated', {
+        action,
+        serverId,
+        byUsername: req.user.username,
+        reason,
+        state,
+      });
+    }
+    return res.json({ success: true, action, member });
+  }
+
+  // "disconnect" aktif ses kanalından çıkarmak için istemciye hedefli olay gönderir.
+  disconnectUserFromServerVoice(io, serverId, targetUserId);
+  io?.to(`user:${targetUserId}`).emit('voice:moderated', {
+    action: 'disconnect',
+    serverId,
+    byUsername: req.user.username,
+    reason,
+  });
+  return res.json({ success: true, action });
+});
+
+module.exports = router;

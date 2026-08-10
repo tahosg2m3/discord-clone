@@ -1,59 +1,72 @@
 ﻿import { createContext, useContext, useState, useEffect } from 'react';
-import { useSocket } from './SocketContext';
+import { loginUser, registerUser, verifyToken } from '../services/api';
 
 const AuthContext = createContext(null);
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
-  return context;
-};
+export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const { connect, disconnect } = useSocket();
+  const [loading, setLoading] = useState(true); // Kilitlenmeyi önleyen kalkan eklendi
 
-  // Load user from localStorage
   useEffect(() => {
-    const savedUser = localStorage.getItem('chat_user');
-    if (savedUser) {
-      const userData = JSON.parse(savedUser);
-      setUser(userData);
-      connect();
-    }
-  }, [connect]);
+    let isMounted = true;
 
-  const login = async (username) => {
-    try {
-      const response = await fetch('http://localhost:3001/api/users/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
+    const restoreSession = async () => {
+      try {
+        const storedUser = localStorage.getItem('user');
+        const token = localStorage.getItem('chat_token');
+        if (!storedUser || !token || storedUser === 'undefined' || storedUser === 'null') return;
 
-      if (!response.ok) throw new Error('Login failed');
+        // Yerel depodaki kullanıcı bilgisine körü körüne güvenmek yerine, her
+        // uygulama açılışında imzalı ve süresi geçmemiş token'ı doğruluyoruz.
+        const response = await verifyToken();
+        if (isMounted) setUser(response.user);
+        localStorage.setItem('user', JSON.stringify(response.user));
+      } catch (error) {
+        console.warn('Oturum doğrulanamadı:', error.message);
+        localStorage.removeItem('user');
+        localStorage.removeItem('chat_token');
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
 
-      const userData = await response.json();
-      setUser(userData);
-      localStorage.setItem('chat_user', JSON.stringify(userData));
-      connect();
-      
-      return userData;
-    } catch (error) {
-      console.error('Login error:', error);
-      throw error;
-    }
+    restoreSession();
+    return () => { isMounted = false; };
+  }, []);
+
+  const login = async (email, password) => {
+    const response = await loginUser({ email, password });
+    setUser(response.user);
+    localStorage.setItem('user', JSON.stringify(response.user));
+    localStorage.setItem('chat_token', response.token);
+    return response.user; // Sayfa yenileme SİLİNDİ!
+  };
+
+  const register = async (username, email, password) => {
+    const response = await registerUser({ username, email, password });
+    setUser(response.user);
+    localStorage.setItem('user', JSON.stringify(response.user));
+    localStorage.setItem('chat_token', response.token);
+    return response.user; // Sayfa yenileme SİLİNDİ!
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem('chat_user');
-    disconnect();
+    localStorage.removeItem('user');
+    localStorage.removeItem('chat_token');
+  };
+
+  const updateUserData = (newData) => {
+    const updatedUser = { ...user, ...newData };
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
-      {children}
+    <AuthContext.Provider value={{ user, login, register, logout, updateUserData }}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 };

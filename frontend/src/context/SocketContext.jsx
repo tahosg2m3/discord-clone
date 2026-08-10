@@ -1,59 +1,54 @@
 ﻿import { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
+import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
-
-export const useSocket = () => {
-  const context = useContext(SocketContext);
-  if (!context) {
-    throw new Error('useSocket must be used within SocketProvider');
-  }
-  return context;
-};
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
+  const { user } = useAuth();
   const [socket, setSocket] = useState(null);
-  const [connected, setConnected] = useState(false);
+  const [isPresenceReady, setIsPresenceReady] = useState(false);
 
   useEffect(() => {
-    // Connect to backend - adjust URL for production
-    const newSocket = io('http://localhost:3001', {
-      transports: ['websocket'], // Force WebSocket (faster than polling)
-      autoConnect: false, // Manual connection after user login
+    // Kullanıcı giriş yapmadıysa boşuna bağlanmaya çalışma
+    if (!user) {
+       setSocket(null);
+       setIsPresenceReady(false);
+       return;
+    }
+
+    const token = localStorage.getItem('chat_token');
+    const newSocket = io(SOCKET_URL, {
+      auth: { token },
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1500,
     });
 
-    // Connection event listeners
     newSocket.on('connect', () => {
-      console.log('✅ Socket connected:', newSocket.id);
-      setConnected(true);
+      console.log('🟢 Soket Hesabına Bağlandı:', newSocket.id);
+      newSocket.emit('authenticate', { userId: user.id, username: user.username });
     });
 
-    newSocket.on('disconnect', (reason) => {
-      console.log('❌ Socket disconnected:', reason);
-      setConnected(false);
-    });
+    newSocket.on('presence:ready', () => setIsPresenceReady(true));
+    newSocket.on('disconnect', () => setIsPresenceReady(false));
 
-    newSocket.on('error', (error) => {
-      console.error('Socket error:', error);
+    newSocket.on('connect_error', (err) => {
+      console.error('🔴 Soket Hatası:', err.message);
     });
 
     setSocket(newSocket);
 
-    // Cleanup on unmount
     return () => {
-      newSocket.close();
+      newSocket.disconnect();
     };
-  }, []);
-
-  const value = {
-    socket,
-    connected,
-    connect: () => socket?.connect(),
-    disconnect: () => socket?.disconnect(),
-  };
+  }, [user]);
 
   return (
-    <SocketContext.Provider value={value}>
+    <SocketContext.Provider value={{ socket, isPresenceReady }}>
       {children}
     </SocketContext.Provider>
   );
