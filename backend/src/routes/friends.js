@@ -1,80 +1,74 @@
 const express = require('express');
-const router = express.Router();
+
 const storage = require('../storage/inMemory');
+const { requireAuth } = require('../middleware/auth');
 
-// GET /api/friends/:userId - Arkadaş listesini getir
-router.get('/:userId', (req, res) => {
-  const friends = storage.getUserFriends(req.params.userId);
-  res.json(friends);
-});
+const router = express.Router();
 
-// GET /api/friends/:userId/pending - Bekleyen istekleri getir
+function emitFriendUpdate(req, userId) {
+  req.app.get('io')?.to(`user:${userId}`).emit('friends:changed', { userId });
+}
+
+router.use(requireAuth);
+
 router.get('/:userId/pending', (req, res) => {
-  // HATA BURADAYDI: getPendingFriendRequests -> getPendingRequests
-  const requests = storage.getPendingRequests(req.params.userId);
-  
-  // İstekleri gönderen kullanıcıların detaylarını da ekleyelim
-  const requestsWithDetails = requests.map(req => {
-    const fromUser = storage.findUserById(req.fromUserId);
-    return {
-      ...req,
-      fromUser: fromUser ? { id: fromUser.id, username: fromUser.username, avatar: fromUser.avatar } : null
-    };
-  });
-
-  res.json(requestsWithDetails);
+  if (req.params.userId !== req.user.id) return res.status(403).json({ error: 'Bu isteklere erişim yetkin yok.' });
+  return res.json(storage.getPendingRequests(req.user.id));
 });
 
-// POST /api/friends/request - Arkadaş isteği gönder
+router.get('/:userId', (req, res) => {
+  if (req.params.userId !== req.user.id) return res.status(403).json({ error: 'Bu arkadaş listesine erişim yetkin yok.' });
+  return res.json(storage.getUserFriends(req.user.id));
+});
+
 router.post('/request', (req, res) => {
-  const { fromUserId, targetUsername } = req.body;
+  const targetUsername = String(req.body.targetUsername || '').trim();
+  const targetUserId = String(req.body.toUserId || '').trim();
+  const targetUser = targetUserId
+    ? storage.getUserById(targetUserId)
+    : storage.findUserByUsername(targetUsername);
 
-  if (!fromUserId || !targetUsername) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
+  if (!targetUser) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+  if (targetUser.id === req.user.id) return res.status(400).json({ error: 'Kendine arkadaşlık isteği gönderemezsin.' });
 
-  // HATA BURADAYDI: getUserByUsername -> findUserByUsername
-  const targetUser = storage.findUserByUsername(targetUsername);
+  const request = storage.sendFriendRequest(req.user.id, targetUser.id);
+  if (!request) return res.status(400).json({ error: 'İstek zaten gönderilmiş veya zaten arkadaşsınız.' });
 
-  if (!targetUser) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  if (targetUser.id === fromUserId) {
-    return res.status(400).json({ error: 'Cannot add yourself' });
-  }
-
-  const request = storage.sendFriendRequest(fromUserId, targetUser.id);
-  
-  if (!request) {
-    return res.status(400).json({ error: 'Request already sent or users are already friends' });
-  }
-
-  res.status(201).json(request);
+  req.app.get('io')?.to(`user:${targetUser.id}`).emit('friend:request', {
+    request: { ...request, fromUser: storage.getPublicUserById(req.user.id) },
+  });
+  return res.status(201).json(request);
 });
 
-// POST /api/friends/accept - İsteği kabul et
 router.post('/accept', (req, res) => {
-  const { requestId } = req.body;
-  
-  const success = storage.acceptFriendRequest(requestId);
-  if (success) {
-    res.json({ message: 'Friend request accepted' });
-  } else {
-    res.status(400).json({ error: 'Failed to accept request' });
+  const request = storage.friendRequests.find(item => item.id === req.body.requestId);
+  if (!request || request.toUserId !== req.user.id || request.status !== 'pending') {
+    return res.status(400).json({ error: 'Arkadaşlık isteği bulunamadı.' });
   }
+
+  storage.acceptFriendRequest(request.id);
+  emitFriendUpdate(req, request.fromUserId);
+  emitFriendUpdate(req, request.toUserId);
+  return res.json({ message: 'Arkadaşlık isteği kabul edildi.' });
 });
 
-// POST /api/friends/reject - İsteği reddet
 router.post('/reject', (req, res) => {
-  const { requestId } = req.body;
-  
-  const success = storage.rejectFriendRequest(requestId);
-  if (success) {
-    res.json({ message: 'Friend request rejected' });
-  } else {
-    res.status(400).json({ error: 'Failed to reject request' });
+  const request = storage.friendRequests.find(item => item.id === req.body.requestId);
+  if (!request || request.toUserId !== req.user.id || request.status !== 'pending') {
+    return res.status(400).json({ error: 'Arkadaşlık isteği bulunamadı.' });
   }
+
+  storage.rejectFriendRequest(request.id);
+  emitFriendUpdate(req, req.user.id);
+  return res.json({ message: 'Arkadaşlık isteği reddedildi.' });
+});
+
+router.delete('/:userId/:friendId', (req, res) => {
+  if (req.params.userId !== req.user.id) return res.status(403).json({ error: 'Bu arkadaşlığı değiştiremezsin.' });
+  storage.removeFriend(req.user.id, req.params.friendId);
+  emitFriendUpdate(req, req.user.id);
+  emitFriendUpdate(req, req.params.friendId);
+  return res.json({ success: true });
 });
 
 module.exports = router;

@@ -6,7 +6,14 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 
+// Route/middleware modülleri yüklenmeden önce .env'i oku; JWT ve APP_DATA_DIR
+// gibi güvenlik/persist ayarları modül yüklenirken kullanılır.
+dotenv.config();
+
+const storage = require('./storage/inMemory');
+
 const serverRoutes = require('./routes/servers');
+const roleRoutes = require('./routes/roles');
 const channelRoutes = require('./routes/channels');
 const userRoutes = require('./routes/users');
 const authRoutes = require('./routes/auth');
@@ -19,10 +26,11 @@ const { startPeerServer } = require('./peerServer');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./middleware/logger');
 
-dotenv.config();
-
 const app = express();
 const server = http.createServer(app);
+const uploadsDirectory = process.env.APP_DATA_DIR
+  ? path.join(path.resolve(process.env.APP_DATA_DIR), 'uploads')
+  : path.join(__dirname, '../uploads');
 
 const io = new Server(server, {
   cors: {
@@ -43,10 +51,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(logger);
 
 // Static files for uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(uploadsDirectory));
 
 // Routes
 app.use('/api/servers', serverRoutes);
+app.use('/api/servers', roleRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
@@ -71,9 +80,31 @@ server.listen(PORT, () => {
   startPeerServer();
 });
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
+let isShuttingDown = false;
+
+function shutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`${signal} signal received: closing HTTP server`);
+
+  // Debounce edilmiş son yazıyı sunucu bağlantılarını kapatmadan önce diske
+  // bas. Electron bu sürece SIGTERM gönderdiğinde de aynı yol çalışır.
+  storage.flush();
+
+  const finish = () => {
+    storage.close();
     console.log('HTTP server closed');
-  });
-});
+    process.exit(0);
+  };
+
+  io.close(() => server.close(finish));
+  setTimeout(() => {
+    storage.close();
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
+app.set('io', io);

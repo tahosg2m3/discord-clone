@@ -11,10 +11,13 @@ import {
   createDMConversation 
 } from '../../services/api';
 import { useServer } from '../../context/ServerContext';
+import { useDM } from '../../context/DMContext';
+import toast from 'react-hot-toast';
 
 export default function FriendsList() {
   const { user } = useAuth();
   const { setCurrentServer } = useServer();
+  const { setActiveDM } = useDM();
   const [activeTab, setActiveTab] = useState('online'); 
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -73,12 +76,15 @@ export default function FriendsList() {
 
   const handleMessageClick = async (friendId) => {
     try {
-        const conversation = await createDMConversation(user.id, friendId);
-        setCurrentServer(null); 
-        console.log("DM Started:", conversation);
-        alert("DM Created! Go to Home server to see chats.");
+      const conversation = await createDMConversation(user.id, friendId);
+      const otherUser = friends.find((friend) => friend.id === friendId);
+      setActiveDM({ ...conversation, otherUser });
+      setCurrentServer(null);
+      window.dispatchEvent(new CustomEvent('discord:navigate-to-dm', { detail: { conversation } }));
+      toast.success('Direkt mesaj açıldı.');
     } catch (error) {
-        console.error("Failed to start DM:", error);
+      console.error('DM başlatılamadı:', error);
+      toast.error('Direkt mesaj başlatılamadı.');
     }
   };
 

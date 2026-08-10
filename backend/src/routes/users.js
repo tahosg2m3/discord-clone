@@ -1,28 +1,17 @@
-﻿const express = require('express');
-const router = express.Router();
+const express = require('express');
+
 const storage = require('../storage/inMemory');
+const { requireAuth } = require('../middleware/auth');
 
-// POST /api/users/login - Simple username login
-router.post('/login', (req, res) => {
-  const { username } = req.body;
-  
-  if (!username || !username.trim()) {
-    return res.status(400).json({ error: 'Username required' });
-  }
+const router = express.Router();
 
-  let user = storage.getUserByUsername(username.trim());
-  
-  if (!user) {
-    user = storage.createUser(username.trim());
-  }
+router.use(requireAuth);
 
-  res.json(user);
-});
+// Eski kullanıcı adıyla şifresiz giriş endpoint'i güvenlik nedeniyle kaldırıldı.
+router.post('/login', (req, res) => res.status(410).json({
+  error: 'Bu giriş yöntemi kaldırıldı. E-posta ve iki aşamalı doğrulama kullan.',
+}));
 
-// GET /api/users - Get all users
-router.get('/', (req, res) => {
-  const users = storage.getAllUsers();
-  res.json(users);
-});
+router.get('/', (req, res) => res.json(storage.getPublicUsers()));
 
 module.exports = router;

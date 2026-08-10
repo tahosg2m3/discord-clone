@@ -9,3 +9,5 @@ release/
 backend/node_modules/
 frontend/node_modules/
 frontend/dist/
+backend/data.sqlite
+backend/data.sqlite-*

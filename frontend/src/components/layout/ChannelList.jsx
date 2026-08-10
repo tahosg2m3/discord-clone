@@ -1,309 +1,478 @@
-﻿import { useState, useEffect, useRef } from 'react';
-import { Hash, Volume2, Plus, ChevronDown, X, Copy, LogOut, UserPlus, Settings } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChevronDown,
+  Copy,
+  Crown,
+  Hash,
+  Headphones,
+  LogOut,
+  MicOff,
+  MoreHorizontal,
+  PhoneOff,
+  Plus,
+  Settings,
+  Shield,
+  Trash2,
+  UserCog,
+  UserPlus,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 import { useServer } from '../../context/ServerContext';
 import { useSocket } from '../../context/SocketContext';
-import { useAuth } from '../../context/AuthContext';
 import { useVoice } from '../../context/VoiceContext';
-import { fetchChannels, createChannel, leaveServer } from '../../services/api';
-import toast from 'react-hot-toast';
+import MemberManagementModal from '../server/MemberManagementModal';
+import ServerSettingsModal from '../server/ServerSettingsModal';
+import {
+  createManagedChannel,
+  getEffectivePermissions,
+  getServerMembers,
+  getServerRoles,
+  permissionsToMap,
+  removeManagedChannel,
+  unwrapMembers,
+  unwrapRoles,
+} from '../server/serverManagementApi';
+import { fetchChannels, leaveServer } from '../../services/api';
+
+function getMemberId(member) {
+  return member?.id || member?.userId || member?.user?.id;
+}
+
+function getVoiceParticipantId(participant) {
+  return participant?.userId || participant?.id || participant?.user?.id;
+}
 
 export default function ChannelList() {
   const { currentServer, currentChannel, setCurrentChannel, setServers, setCurrentServer } = useServer();
   const { socket } = useSocket();
   const { user } = useAuth();
-  const { joinVoiceChannel } = useVoice();
-  
+  const {
+    joinVoiceChannel,
+    activeVoiceChannel,
+    voiceChannelMembers,
+    requestVoiceChannelMembers,
+    speakingUserIds,
+  } = useVoice();
+
   const [channels, setChannels] = useState([]);
-  const [createType, setCreateType] = useState(null); // 'text' veya 'voice'
+  const [createType, setCreateType] = useState(null);
   const [newChannelName, setNewChannelName] = useState('');
-  
-  // Sunucu Menüsü için State
   const [showServerMenu, setShowServerMenu] = useState(false);
+  const [showServerSettings, setShowServerSettings] = useState(false);
+  const [showMemberManager, setShowMemberManager] = useState(false);
+  const [openChannelMenu, setOpenChannelMenu] = useState(null);
+  const [openVoiceMenu, setOpenVoiceMenu] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [permissionMap, setPermissionMap] = useState({});
+  const [voiceOverrides, setVoiceOverrides] = useState({});
   const menuRef = useRef(null);
+  const floatingRef = useRef(null);
+
+  const isOwner = Boolean(currentServer?.creatorId && currentServer.creatorId === user?.id);
+  const currentMember = useMemo(() => members.find((member) => getMemberId(member) === user?.id), [members, user?.id]);
+  const fallbackPermissions = useMemo(() => getEffectivePermissions({ roles, member: currentMember, isOwner }), [roles, currentMember, isOwner]);
+  const permissions = Object.keys(permissionMap).length ? permissionMap : fallbackPermissions;
+  const canManageChannels = isOwner || Boolean(permissions.MANAGE_CHANNELS || permissions.ADMINISTRATOR);
+  const canManageMembers = isOwner || Boolean(permissions.KICK_MEMBERS || permissions.MODERATE_MEMBERS || permissions.MUTE_MEMBERS || permissions.DEAFEN_MEMBERS || permissions.MOVE_MEMBERS || permissions.ADMINISTRATOR);
+  const canMuteMembers = isOwner || Boolean(permissions.MUTE_MEMBERS || permissions.ADMINISTRATOR);
+  const canDeafenMembers = isOwner || Boolean(permissions.DEAFEN_MEMBERS || permissions.ADMINISTRATOR);
+  const canDisconnectMembers = isOwner || Boolean(permissions.MOVE_MEMBERS || permissions.ADMINISTRATOR);
 
   useEffect(() => {
-    if (currentServer) {
-      loadChannels();
-    }
-  }, [currentServer]);
+    if (!currentServer?.id) return undefined;
 
-  // Menü dışına tıklayınca kapatma
+    loadChannels();
+    requestVoiceChannelMembers(currentServer.id);
+
+    Promise.all([getServerRoles(currentServer.id), getServerMembers(currentServer.id)])
+      .then(([rolePayload, memberPayload]) => {
+        setRoles(unwrapRoles(rolePayload));
+        setMembers(unwrapMembers(memberPayload));
+        setPermissionMap(permissionsToMap(rolePayload?.currentUserPermissions || rolePayload?.permissions || []));
+      })
+      .catch((error) => {
+        // Eski bir sunucu/veri için bu endpoint henüz yoksa normal kanal akışı çalışmaya devam eder.
+        console.warn('Rol izinleri yüklenemedi:', error.message);
+        setRoles([]);
+        setMembers([]);
+        setPermissionMap({});
+      });
+
+    return undefined;
+  }, [currentServer?.id]);
+
+  useEffect(() => {
+    if (!socket || !currentServer?.id) return undefined;
+
+    const handleChannelsChanged = ({ serverId }) => {
+      if (serverId === currentServer.id) loadChannels();
+    };
+    const handleMembersChanged = ({ serverId }) => {
+      if (serverId !== currentServer.id) return;
+      getServerMembers(currentServer.id).then((payload) => setMembers(unwrapMembers(payload))).catch(() => {});
+      getServerRoles(currentServer.id).then((payload) => setPermissionMap(permissionsToMap(payload?.currentUserPermissions || payload?.permissions || []))).catch(() => {});
+    };
+
+    socket.on('channels:changed', handleChannelsChanged);
+    socket.on('server:members-changed', handleMembersChanged);
+    return () => {
+      socket.off('channels:changed', handleChannelsChanged);
+      socket.off('server:members-changed', handleMembersChanged);
+    };
+  }, [socket, currentServer?.id]);
+
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setShowServerMenu(false);
+      if (menuRef.current && !menuRef.current.contains(event.target)) setShowServerMenu(false);
+      if (floatingRef.current && !floatingRef.current.contains(event.target)) {
+        setOpenChannelMenu(null);
+        setOpenVoiceMenu(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Kanal değiştiğinde socket room işlemleri (Text chat için)
-  useEffect(() => {
-    if (socket && currentChannel && user && currentServer) {
-      // Eski kanaldan ayrıl
-      if (currentChannel.previous) {
-        socket.emit('user:leave', {
-          channelId: currentChannel.previous,
-        });
-      }
-
-      // Yeni kanala katıl
-      socket.emit('user:join', {
-        username: user.username,
-        serverId: currentServer.id,
-        channelId: currentChannel.id,
-      });
-    }
-  }, [currentChannel, socket, user, currentServer]);
-
-  const loadChannels = async () => {
+  async function loadChannels() {
+    if (!currentServer?.id) return;
     try {
       const data = await fetchChannels(currentServer.id);
       setChannels(data);
-      // Eğer hiç kanal seçili değilse ilkini seç
-      if (data.length > 0 && !currentChannel) {
+      const currentStillExists = data.some((channel) => channel.id === currentChannel?.id);
+      if (data.length && (!currentChannel || currentChannel.serverId !== currentServer.id || !currentStillExists)) {
         setCurrentChannel(data[0]);
       }
     } catch (error) {
-      console.error('Failed to load channels:', error);
+      console.error('Kanallar yüklenemedi:', error);
+      toast.error('Kanallar yüklenemedi.');
+    }
+  }
+
+  const handleCreateChannel = async (event) => {
+    event.preventDefault();
+    const channelName = newChannelName.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!channelName || !createType || !currentServer?.id) return;
+
+    try {
+      const channel = await createManagedChannel(currentServer.id, channelName, createType, user.id);
+      setChannels((previous) => [...previous, channel]);
+      setNewChannelName('');
+      setCreateType(null);
+      setCurrentChannel(channel);
+      toast.success(`${createType === 'voice' ? 'Sesli' : 'Metin'} kanalı oluşturuldu.`);
+    } catch (error) {
+      toast.error(error.message || 'Kanal oluşturulamadı.');
     }
   };
 
-  const handleCreateChannel = async (e) => {
-    e.preventDefault();
-    if (!newChannelName.trim() || !createType) return;
+  const handleDeleteChannel = async (channel) => {
+    if (!canManageChannels) return;
+    if (!window.confirm(`“${channel.name}” kanalını silmek istediğine emin misin?`)) return;
 
     try {
-      const channel = await createChannel(currentServer.id, newChannelName, createType);
-      setChannels([...channels, channel]);
-      setNewChannelName('');
-      setCreateType(null);
-      toast.success('Channel created');
+      await removeManagedChannel(channel.id, user.id);
+      const remaining = channels.filter((candidate) => candidate.id !== channel.id);
+      setChannels(remaining);
+      if (currentChannel?.id === channel.id) setCurrentChannel(remaining[0] || null);
+      setOpenChannelMenu(null);
+      toast.success('Kanal silindi.');
     } catch (error) {
-      console.error('Failed to create channel:', error);
-      toast.error('Failed to create channel');
+      toast.error(error.message || 'Kanal silinemedi.');
     }
   };
 
   const handleChannelClick = (channel) => {
-    // 1. Kanalı aktif yap
-    setCurrentChannel({
-      ...channel,
-      previous: currentChannel?.id,
-    });
-
-    // 2. Eğer sesli kanalsa, sesli görüşmeye katıl
-    if (channel.type === 'voice') {
-      joinVoiceChannel(channel.id);
-    }
+    setCurrentChannel({ ...channel, previous: currentChannel?.id });
+    if (channel.type === 'voice') joinVoiceChannel(channel);
   };
 
-  // Sunucudan Ayrılma Fonksiyonu
   const handleLeaveServer = async () => {
-    if (!window.confirm(`Are you sure you want to leave ${currentServer.name}?`)) return;
+    if (!currentServer || isOwner) return;
+    if (!window.confirm(`“${currentServer.name}” sunucusundan ayrılmak istediğine emin misin?`)) return;
 
     try {
       await leaveServer(currentServer.id, user.id);
-      
-      // Listeden sil ve ana ekrana dön
-      setServers(prev => prev.filter(s => s.id !== currentServer.id));
-      setCurrentServer(null); 
-      
-      toast.success('Left server');
+      setServers((previous) => previous.filter((server) => server.id !== currentServer.id));
+      setCurrentServer(null);
+      setCurrentChannel(null);
+      toast.success('Sunucudan ayrıldın.');
     } catch (error) {
-      toast.error(error.message || 'Failed to leave server');
+      toast.error(error.message || 'Sunucudan ayrılamadın.');
     }
   };
 
-  // Davet Kodu Kopyalama
-  const copyInviteCode = () => {
-    if (currentServer?.inviteCode) {
-      navigator.clipboard.writeText(currentServer.inviteCode);
-      toast.success('Invite Code Copied!');
+  const copyInviteCode = async () => {
+    if (!currentServer?.inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(currentServer.inviteCode);
+      toast.success('Davet kodu kopyalandı.');
       setShowServerMenu(false);
+    } catch {
+      toast.error('Davet kodu kopyalanamadı.');
     }
   };
 
-  // Kanalları Grupla
-  const textChannels = channels.filter(c => !c.type || c.type === 'text');
-  const voiceChannels = channels.filter(c => c.type === 'voice');
+  const shareInvite = async () => {
+    if (!currentServer?.inviteCode) return;
+    const text = `${currentServer.name} sunucusuna katıl: ${currentServer.inviteCode}`;
+    try {
+      if (navigator.share) await navigator.share({ title: currentServer.name, text });
+      else await navigator.clipboard.writeText(text);
+      toast.success('Davet bilgisi hazır.');
+      setShowServerMenu(false);
+    } catch (error) {
+      if (error?.name !== 'AbortError') toast.error('Davet bilgisi paylaşılamadı.');
+    }
+  };
+
+  const emitVoiceModeration = (action, participant, channel) => {
+    const targetUserId = getVoiceParticipantId(participant);
+    if (!socket || !targetUserId || targetUserId === user?.id) return;
+
+    const requiresMute = ['mute', 'unmute'].includes(action);
+    const requiresDeafen = ['deafen', 'undeafen'].includes(action);
+    if ((requiresMute && !canMuteMembers) || (requiresDeafen && !canDeafenMembers) || (action === 'disconnect' && !canDisconnectMembers)) {
+      toast.error('Bu işlem için yetkin yok.');
+      return;
+    }
+
+    socket.emit('voice:moderate', { action, targetUserId, channelId: channel.id }, (result) => {
+      if (!result?.success) {
+        toast.error(result?.error || 'Ses moderasyonu uygulanamadı.');
+        requestVoiceChannelMembers(currentServer?.id);
+        return;
+      }
+
+      setVoiceOverrides((previous) => ({
+        ...previous,
+        [targetUserId]: {
+          ...previous[targetUserId],
+          ...(action === 'mute' ? { muted: true } : {}),
+          ...(action === 'unmute' ? { muted: false } : {}),
+          ...(action === 'deafen' ? { deafened: true } : {}),
+          ...(action === 'undeafen' ? { deafened: false } : {}),
+        },
+      }));
+      setOpenVoiceMenu(null);
+      const labels = { mute: 'susturuldu', unmute: 'susturması kaldırıldı', deafen: 'sağırlaştırıldı', undeafen: 'sağırlaştırması kaldırıldı', disconnect: 'ses kanalından çıkarıldı' };
+      toast.success(`Üye ${labels[action]}.`);
+    });
+  };
+
+  const textChannels = channels.filter((channel) => !channel.type || channel.type === 'text');
+  const voiceChannels = channels.filter((channel) => channel.type === 'voice');
 
   const renderCreateForm = (type) => {
     if (createType !== type) return null;
     return (
-      <form onSubmit={handleCreateChannel} className="px-2 mb-2">
+      <form onSubmit={handleCreateChannel} className="px-2 pb-2">
+        <label className="sr-only" htmlFor={`new-${type}-channel`}>Kanal adı</label>
         <input
+          id={`new-${type}-channel`}
           type="text"
           value={newChannelName}
-          onChange={(e) => setNewChannelName(e.target.value)}
-          placeholder={`new-${type}-channel`}
-          className="w-full bg-gray-900 text-white px-2 py-1 rounded text-sm 
-                    focus:outline-none focus:ring-2 focus:ring-blue-500"
+          onChange={(event) => setNewChannelName(event.target.value)}
+          placeholder={`${type === 'voice' ? 'sesli' : 'metin'}-kanalı`}
+          maxLength={50}
+          className="w-full rounded-[4px] border border-[#00A8FC] bg-[#1E1F22] px-2.5 py-2 text-sm text-white outline-none placeholder:text-[#72767D]"
           autoFocus
-          onBlur={() => !newChannelName && setCreateType(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setCreateType(null);
+          }}
+          onBlur={() => {
+            if (!newChannelName) setCreateType(null);
+          }}
         />
+        <p className="mt-1 px-1 text-[10px] text-[#949BA4]">Enter ile oluştur, Esc ile vazgeç</p>
       </form>
     );
   };
 
-  return (
-    <div className="w-60 bg-gray-800 flex flex-col h-full relative">
-      {/* --- SERVER HEADER (Menü Eklendi) --- */}
-      <div className="h-12 px-4 flex items-center shadow-md border-b border-gray-900 shrink-0 z-20">
-        <button 
-          onClick={() => setShowServerMenu(!showServerMenu)}
-          className={`flex items-center justify-between w-full hover:bg-gray-700/50 
-                    px-2 py-1 rounded transition-colors ${showServerMenu ? 'bg-gray-700/50 text-white' : 'text-gray-100'}`}
+  const renderChannel = (channel) => {
+    const isActive = currentChannel?.id === channel.id;
+    const isMenuOpen = openChannelMenu === channel.id;
+    return (
+      <div key={channel.id} className="group relative px-2" ref={isMenuOpen ? floatingRef : null}>
+        <button
+          type="button"
+          onClick={() => handleChannelClick(channel)}
+          className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left transition ${isActive ? 'bg-[#404249] text-white shadow-sm' : 'text-[#949BA4] hover:bg-[#35373C] hover:text-[#DBDEE1]'}`}
         >
-          <span className="font-semibold truncate">{currentServer?.name}</span>
-          {showServerMenu ? <X className="w-4 h-4" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          <Hash className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
         </button>
-
-        {/* Server Dropdown Menu */}
-        {showServerMenu && (
-          <div ref={menuRef} className="absolute top-14 left-2 right-2 bg-gray-950 rounded-md shadow-xl border border-gray-800 overflow-hidden animate-in zoom-in-95 duration-100 origin-top p-1.5 z-50">
-            
-            {/* Invite Code Section */}
-            <div className="bg-blue-600/10 border border-blue-600/20 rounded p-2 mb-2">
-              <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-1">
-                Invite Code
-              </div>
-              <div className="flex items-center justify-between">
-                <code className="text-white font-mono font-bold text-sm select-all">
-                  {currentServer?.inviteCode || 'ERROR'}
-                </code>
-                <button 
-                  onClick={copyInviteCode}
-                  className="text-gray-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
-                  title="Copy Code"
-                >
-                  <Copy className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="h-px bg-gray-800 my-1 mx-1" />
-            
-            <button className="w-full text-left px-2 py-2 rounded text-sm text-gray-300 hover:bg-blue-600 hover:text-white flex items-center transition-colors group">
-              <UserPlus className="w-4 h-4 mr-2 text-blue-400 group-hover:text-white" />
-              Invite People
-            </button>
-            <button className="w-full text-left px-2 py-2 rounded text-sm text-gray-300 hover:bg-gray-800 flex items-center transition-colors">
-              <Settings className="w-4 h-4 mr-2 text-gray-400" />
-              Server Settings
-            </button>
-
-            <div className="h-px bg-gray-800 my-1 mx-1" />
-
-            <button 
-              onClick={handleLeaveServer}
-              className="w-full text-left px-2 py-2 rounded text-sm text-red-400 hover:bg-red-500/10 flex items-center transition-colors"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Leave Server
+        {canManageChannels && (
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); setOpenChannelMenu(isMenuOpen ? null : channel.id); setOpenVoiceMenu(null); }}
+            title="Kanal işlemleri"
+            className={`absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#949BA4] transition hover:bg-[#1E1F22] hover:text-white ${isMenuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        )}
+        {isMenuOpen && (
+          <div className="absolute right-2 top-10 z-50 w-40 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+            <button type="button" onClick={() => handleDeleteChannel(channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10">
+              <Trash2 className="h-3.5 w-3.5" /> Kanalı sil
             </button>
           </div>
         )}
       </div>
+    );
+  };
 
-      {/* --- CHANNELS LIST (Eski Kod Aynen Korundu) --- */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar" onClick={() => setShowServerMenu(false)}>
-        
-        {/* TEXT CHANNELS */}
-        <div className="pt-4 pb-2 px-2">
-          <div className="flex items-center justify-between px-2 mb-1 group">
-            <div className="flex items-center text-xs font-bold text-gray-400 
-                          uppercase tracking-wide hover:text-gray-300 cursor-pointer">
-              <ChevronDown className="w-3 h-3 mr-0.5" />
-              Text Channels
+  return (
+    <>
+      <div className="flex h-full w-[256px] flex-col border-r border-white/[0.06] bg-[#151b27]">
+        <header className="relative z-20 h-14 shrink-0 border-b border-white/[0.06] px-3" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setShowServerMenu((open) => !open)}
+            className={`flex h-full w-full items-center justify-between gap-2 px-2 text-left transition ${showServerMenu ? 'text-white' : 'text-[#F2F3F5] hover:text-white'}`}
+          >
+            <span className="min-w-0 flex-1 truncate font-semibold">{currentServer?.name}</span>
+            {showServerMenu ? <X className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0 text-[#B5BAC1]" />}
+          </button>
+
+          {showServerMenu && (
+            <div className="absolute left-3 right-3 top-12 z-50 overflow-hidden rounded-lg border border-white/[0.08] bg-[#111214] p-1.5 shadow-2xl">
+              <div className="mb-1.5 rounded-md border border-[#5865F2]/25 bg-[#5865F2]/10 px-2.5 py-2">
+                <span className="block text-[10px] font-bold uppercase tracking-wide text-[#8EA1E1]">Davet kodu</span>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <code className="min-w-0 flex-1 truncate text-sm font-bold tracking-wide text-[#F2F3F5]">{currentServer?.inviteCode || '—'}</code>
+                  <button type="button" onClick={copyInviteCode} title="Kopyala" className="rounded p-1 text-[#B5BAC1] transition hover:bg-white/10 hover:text-white"><Copy className="h-4 w-4" /></button>
+                </div>
+              </div>
+
+              <button type="button" onClick={shareInvite} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#5865F2] hover:text-white">
+                <UserPlus className="h-4 w-4" /> İnsanları davet et
+              </button>
+
+              {isOwner && (
+                <button type="button" onClick={() => { setShowServerSettings(true); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
+                  <Settings className="h-4 w-4" /> Sunucu ayarları
+                </button>
+              )}
+
+              {!isOwner && canManageMembers && (
+                <button type="button" onClick={() => { setShowMemberManager(true); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
+                  <UserCog className="h-4 w-4" /> Üyeleri yönet
+                </button>
+              )}
+
+              {!isOwner && (
+                <>
+                  <div className="my-1 h-px bg-white/[0.07]" />
+                  <button type="button" onClick={handleLeaveServer} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#F23F42] transition hover:bg-[#F23F42]/10">
+                    <LogOut className="h-4 w-4" /> Sunucudan ayrıl
+                  </button>
+                </>
+              )}
             </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); setCreateType(createType === 'text' ? null : 'text'); }}
-              className="text-gray-400 hover:text-gray-200"
-              title="Create Text Channel"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
+          )}
+        </header>
 
-          {renderCreateForm('text')}
-
-          {textChannels.map((channel) => (
-            <button
-              key={channel.id}
-              onClick={() => handleChannelClick(channel)}
-              className={`
-                w-full flex items-center px-2 py-1.5 mb-0.5 rounded group
-                transition-colors
-                ${currentChannel?.id === channel.id
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:bg-gray-750 hover:text-gray-200'
-                }
-              `}
-            >
-              <Hash className="w-5 h-5 mr-1.5 text-gray-500 group-hover:text-gray-400" />
-              <span className="text-sm font-medium truncate">{channel.name}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* VOICE CHANNELS */}
-        <div className="pt-4 pb-2 px-2">
-          <div className="flex items-center justify-between px-2 mb-1 group">
-            <div className="flex items-center text-xs font-bold text-gray-400 
-                          uppercase tracking-wide hover:text-gray-300 cursor-pointer">
-              <ChevronDown className="w-3 h-3 mr-0.5" />
-              Voice Channels
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto py-3" onClick={() => setShowServerMenu(false)}>
+          <section className="pb-3">
+            <div className="mb-1 flex items-center justify-between px-4">
+              <span className="flex items-center text-[11px] font-bold uppercase tracking-wide text-[#949BA4]"><ChevronDown className="mr-0.5 h-3.5 w-3.5" /> Metin Kanalları</span>
+              {canManageChannels && (
+                <button type="button" onClick={() => setCreateType(createType === 'text' ? null : 'text')} title="Metin kanalı oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
+              )}
             </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); setCreateType(createType === 'voice' ? null : 'voice'); }}
-              className="text-gray-400 hover:text-gray-200"
-              title="Create Voice Channel"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
+            {renderCreateForm('text')}
+            <div className="space-y-0.5">{textChannels.map(renderChannel)}</div>
+          </section>
 
-          {renderCreateForm('voice')}
+          <section className="pt-2">
+            <div className="mb-1 flex items-center justify-between px-4">
+              <span className="flex items-center text-[11px] font-bold uppercase tracking-wide text-[#949BA4]"><ChevronDown className="mr-0.5 h-3.5 w-3.5" /> Sesli Kanallar</span>
+              {canManageChannels && (
+                <button type="button" onClick={() => setCreateType(createType === 'voice' ? null : 'voice')} title="Sesli kanal oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
+              )}
+            </div>
+            {renderCreateForm('voice')}
 
-          {voiceChannels.map((channel) => (
-            <button
-              key={channel.id}
-              onClick={() => handleChannelClick(channel)}
-              className={`
-                w-full flex items-center px-2 py-1.5 mb-0.5 rounded group
-                transition-colors
-                ${currentChannel?.id === channel.id
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:bg-gray-750 hover:text-gray-200'
-                }
-              `}
-            >
-              <Volume2 className="w-5 h-5 mr-1.5 text-gray-500 group-hover:text-gray-400" />
-              <span className="text-sm font-medium truncate">{channel.name}</span>
-            </button>
-          ))}
+            <div className="space-y-1">
+              {voiceChannels.map((channel) => {
+                const isActive = activeVoiceChannel?.id === channel.id || currentChannel?.id === channel.id;
+                const channelMembers = voiceChannelMembers[channel.id] || [];
+                return (
+                  <div key={channel.id} className="group relative px-2" ref={openChannelMenu === channel.id ? floatingRef : null}>
+                    <button type="button" onClick={() => handleChannelClick(channel)} className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left transition ${isActive ? 'bg-[#404249] text-white shadow-sm' : 'text-[#949BA4] hover:bg-[#35373C] hover:text-[#DBDEE1]'}`}>
+                      <Volume2 className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
+                    </button>
+                    {canManageChannels && (
+                      <button type="button" onClick={(event) => { event.stopPropagation(); setOpenChannelMenu(openChannelMenu === channel.id ? null : channel.id); setOpenVoiceMenu(null); }} title="Kanal işlemleri" className={`absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#949BA4] transition hover:bg-[#1E1F22] hover:text-white ${openChannelMenu === channel.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    )}
+                    {openChannelMenu === channel.id && (
+                      <div className="absolute right-2 top-10 z-50 w-40 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+                        <button type="button" onClick={() => handleDeleteChannel(channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10"><Trash2 className="h-3.5 w-3.5" /> Kanalı sil</button>
+                      </div>
+                    )}
+
+                    {channelMembers.map((participant) => {
+                      const participantId = getVoiceParticipantId(participant);
+                      const member = members.find((candidate) => getMemberId(candidate) === participantId);
+                      const displayName = participant.username || participant.user?.username || member?.username || member?.user?.username || 'Bağlanan kullanıcı';
+                      const isSpeaking = Boolean(speakingUserIds[participantId]);
+                      const override = voiceOverrides[participantId] || {};
+                      const isMuted = override.muted ?? Boolean(participant.muted || participant.serverMuted || member?.serverMuted);
+                      const isDeafened = override.deafened ?? Boolean(participant.deafened || participant.serverDeafened || member?.serverDeafened);
+                      const voiceMenuKey = `${channel.id}:${participantId}`;
+                      const moderatorCanAct = participantId !== user?.id && (canMuteMembers || canDeafenMembers || canDisconnectMembers);
+                      return (
+                        <div key={participantId} className="relative ml-7 mr-2 mt-1" ref={openVoiceMenu === voiceMenuKey ? floatingRef : null}>
+                          <div className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 transition-all ${isSpeaking ? 'border-[#34D399] bg-[#34D399]/10 shadow-[0_0_12px_rgba(52,211,153,0.18)]' : 'border-transparent hover:bg-white/[0.04]'}`}>
+                            <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${isSpeaking ? 'bg-[#34D399]' : 'bg-[#475569]'}`}>{displayName[0]?.toUpperCase() || '?'}</div>
+                            <span className={`min-w-0 flex-1 truncate text-[12px] ${isSpeaking ? 'font-semibold text-[#D1FAE5]' : 'text-[#CBD5E1]'}`}>{displayName}</span>
+                            {isMuted && <MicOff className="h-3.5 w-3.5 shrink-0 text-[#ED4245]" title="Susturuldu" />}
+                            {isDeafened && <Headphones className="h-3.5 w-3.5 shrink-0 text-[#ED4245]" title="Sağırlaştırıldı" />}
+                            {isSpeaking && !isMuted && <VolumeX className="h-3.5 w-3.5 shrink-0 rotate-180 text-[#34D399]" />}
+                            {moderatorCanAct && (
+                              <button type="button" onClick={() => { setOpenVoiceMenu(openVoiceMenu === voiceMenuKey ? null : voiceMenuKey); setOpenChannelMenu(null); }} title="Ses moderasyonu" className="rounded p-0.5 text-[#949BA4] transition hover:bg-[#1E1F22] hover:text-white"><MoreHorizontal className="h-3.5 w-3.5" /></button>
+                            )}
+                          </div>
+                          {openVoiceMenu === voiceMenuKey && (
+                            <div className="absolute right-0 top-8 z-[60] w-48 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+                              {canMuteMembers && <button type="button" onClick={() => emitVoiceModeration(isMuted ? 'unmute' : 'mute', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><MicOff className="h-3.5 w-3.5" /> {isMuted ? 'Susturmayı kaldır' : 'Sustur'}</button>}
+                              {canDeafenMembers && <button type="button" onClick={() => emitVoiceModeration(isDeafened ? 'undeafen' : 'deafen', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><Headphones className="h-3.5 w-3.5" /> {isDeafened ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'}</button>}
+                              {canDisconnectMembers && <button type="button" onClick={() => emitVoiceModeration('disconnect', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10"><PhoneOff className="h-3.5 w-3.5" /> Kanaldan çıkar</button>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         </div>
-
       </div>
 
-      {/* --- USER PROFILE BAR (Eski Kod Aynen Korundu) --- */}
-      <div className="h-14 bg-gray-900 px-2 flex items-center shrink-0 border-t border-gray-950">
-        <div className="flex items-center space-x-2 pl-1 hover:bg-gray-800 p-1 rounded cursor-pointer w-full transition-colors">
-          <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center 
-                        justify-center text-white text-sm font-semibold relative">
-            {user?.username?.[0]?.toUpperCase()}
-            <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-gray-900 rounded-full"></div>
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white truncate w-24">
-              {user?.username}
-            </div>
-            <div className="text-xs text-gray-400">Online</div>
-          </div>
-        </div>
-      </div>
-    </div>
+      {showServerSettings && <ServerSettingsModal onClose={() => setShowServerSettings(false)} />}
+      {showMemberManager && (
+        <MemberManagementModal
+          serverId={currentServer?.id}
+          actorId={user?.id}
+          roles={roles}
+          members={members}
+          permissions={permissions}
+          isOwner={isOwner}
+          onMembersChange={setMembers}
+          onClose={() => setShowMemberManager(false)}
+        />
+      )}
+    </>
   );
 }

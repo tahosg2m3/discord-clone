@@ -1,49 +1,32 @@
 const storage = require('../../storage/inMemory');
-const { v4: uuidv4 } = require('uuid');
+const { messageService } = require('../../services/messageService');
 
-exports.handleSendDM = (io, socket, data) => {
-  const { receiverId, content } = data;
-  const senderId = socket.userData.userId;
-  const username = socket.userData.username; // EKLENDİ: Gönderen adı
+// Eski dm:send event'i için güvenli geriye dönük destek. Yeni arayüz normal
+// message:send + DM kanalını kullanır; burada da kimlik yalnızca socket JWT'den gelir.
+exports.handleSendDM = async (io, socket, data = {}) => {
+  const senderId = socket.userData?.userId;
+  const username = socket.userData?.username;
+  const receiverId = String(data.receiverId || '');
+  const content = String(data.content || '').trim();
 
-  if (!content || !receiverId || !senderId) return;
+  if (!socket.userData?.authenticated || !senderId || !username || !receiverId || !content) return;
+  if (receiverId === senderId || !storage.getUserById(receiverId)) return;
 
-  // 1. Konuşmayı bul veya oluştur
-  const conversation = storage.getOrCreateDMConversation(senderId, receiverId);
+  try {
+    const conversation = storage.getOrCreateDMConversation(senderId, receiverId);
+    const message = await messageService.createMessage({
+      username,
+      userId: senderId,
+      content,
+      channelId: conversation.channelId,
+    });
 
-  // 2. Mesaj objesi oluştur
-  const message = {
-    id: uuidv4(),
-    conversationId: conversation.id,
-    senderId,
-    username, // EKLENDİ: Mesaj listesinde görünmesi için şart
-    content,
-    timestamp: Date.now(),
-    type: 'text'
-  };
-
-  // 3. Mesajı kaydet
-  storage.addDMMessage(conversation.id, message);
-
-  // 4. Mesajı GÖNDER (Her iki tarafa da)
-  // Alıcıya gönder
-  io.to(`user:${receiverId}`).emit('dm:receive', {
-    conversationId: conversation.id,
-    message
-  });
-
-  // Gönderene de gönder (Ekranda görünmesi için)
-  socket.emit('dm:receive', {
-    conversationId: conversation.id,
-    message
-  });
-  
-  // Konuşma listesini güncelle (Son mesaj bilgisi için)
-  const conversationUpdate = {
-     ...conversation,
-     lastMessageAt: message.timestamp,
-     otherUser: storage.getUserById(senderId)
-  };
-  
-  io.to(`user:${receiverId}`).emit('dm:conversation-update', conversationUpdate);
+    io.to(`channel:${conversation.channelId}`).emit('message:receive', message);
+    socket.emit('message:receive', message);
+    io.to(`user:${receiverId}`).emit('dm:notification', { channelId: conversation.channelId, message });
+    io.to(`user:${receiverId}`).emit('dm:receive', { conversationId: conversation.id, message });
+  } catch (error) {
+    console.error('Özel mesaj gönderilemedi:', error.message);
+    socket.emit('message:error', { message: 'Özel mesaj gönderilemedi.' });
+  }
 };

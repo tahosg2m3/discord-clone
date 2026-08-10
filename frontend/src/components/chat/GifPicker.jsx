@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Search } from 'lucide-react';
+import { X, Search, Loader2 } from 'lucide-react';
 
 const TENOR_API_KEY = 'AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ'; // Public test key
 
@@ -54,20 +54,27 @@ export default function GifPicker({ onClose, onSelectGif }) {
   };
 
   const handleSelectGif = (gif) => {
-    const gifUrl = gif.media_formats.gif.url;
-    onSelectGif(gifUrl);
+    const gifUrl = gif.media_formats?.gif?.url || gif.media_formats?.mediumgif?.url;
+    if (!gifUrl) return;
+    onSelectGif({
+      url: gifUrl,
+      previewUrl: gif.media_formats?.tinygif?.url || gifUrl,
+      filename: gif.content_description || 'GIF',
+      mimetype: 'image/gif',
+      type: 'gif',
+    });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="GIF seçici">
+      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-[#1e293b] shadow-2xl shadow-black/50">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold text-white">Select a GIF</h2>
+        <div className="flex items-center justify-between border-b border-white/[0.08] p-4">
+          <h2 className="text-lg font-semibold text-[#f8fafc]">GIF seç</h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="rounded-lg p-1 text-[#94a3b8] transition-colors hover:bg-white/[0.08] hover:text-white"
           >
             <X className="w-5 h-5" />
           </button>
@@ -76,42 +83,39 @@ export default function GifPicker({ onClose, onSelectGif }) {
         {/* Search */}
         <div className="p-4">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#94a3b8]" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search for GIFs..."
-              className="w-full bg-gray-900 text-white pl-10 pr-4 py-2 rounded-lg 
-                       focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="GIF ara..."
+              className="w-full rounded-xl border border-white/[0.07] bg-[#111827] py-2.5 pl-10 pr-4 text-[#f8fafc] outline-none transition-colors placeholder:text-[#64748b] focus:border-[#3b82f6]"
               autoFocus
             />
           </div>
         </div>
 
         {/* GIF Grid */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
           {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+            <div className="flex h-44 items-center justify-center">
+              <Loader2 className="h-7 w-7 animate-spin text-[#60a5fa]" />
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
               {gifs.map((gif) => (
                 <button
                   key={gif.id}
                   onClick={() => handleSelectGif(gif)}
-                  className="relative aspect-square rounded-lg overflow-hidden 
-                           hover:ring-2 hover:ring-blue-500 transition-all group"
+                  className="group relative aspect-square overflow-hidden rounded-xl bg-[#111827] transition-all hover:ring-2 hover:ring-[#60a5fa]"
                 >
                   <img
-                    src={gif.media_formats.tinygif.url}
+                    src={gif.media_formats?.tinygif?.url || gif.media_formats?.gif?.url}
                     alt={gif.content_description}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 
-                               transition-opacity flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">Select</span>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                    <span className="text-sm font-medium text-white">Seç</span>
                   </div>
                 </button>
               ))}
@@ -119,15 +123,15 @@ export default function GifPicker({ onClose, onSelectGif }) {
           )}
 
           {!loading && gifs.length === 0 && (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <p>No GIFs found</p>
+            <div className="flex h-44 items-center justify-center text-[#94a3b8]">
+              <p>GIF bulunamadı.</p>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-gray-700 text-center">
-          <p className="text-xs text-gray-500">Powered by Tenor</p>
+        <div className="border-t border-white/[0.08] p-3 text-center">
+          <p className="text-xs text-[#64748b]">Tenor tarafından sağlanır</p>
         </div>
       </div>
     </div>

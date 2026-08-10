@@ -3,10 +3,14 @@ import { X, MessageSquare, UserPlus, Copy, Check } from 'lucide-react';
 import { getColorForString } from '../../utils/colors';
 import { sendFriendRequest, createDMConversation } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useDM } from '../../context/DMContext';
+import { useServer } from '../../context/ServerContext';
 import toast from 'react-hot-toast';
 
 export default function UserPopover({ targetUser, onClose }) {
   const { user: currentUser } = useAuth();
+  const { setActiveDM } = useDM();
+  const { setCurrentServer } = useServer();
   const [copied, setCopied] = useState(false);
 
   // Banner rengini ID'den veya isimden rastgele ama sabit alıyoruz
@@ -38,7 +42,11 @@ export default function UserPopover({ targetUser, onClose }) {
   // Mesaj Gönderme (DM Başlatma)
   const handleSendMessage = async () => {
     try {
-      await createDMConversation(currentUser.id, targetUser.id);
+      const conversation = await createDMConversation(currentUser.id, targetUser.id);
+      const completeConversation = { ...conversation, otherUser: targetUser };
+      setActiveDM(completeConversation);
+      setCurrentServer(null);
+      window.dispatchEvent(new CustomEvent('discord:navigate-to-dm', { detail: { conversation: completeConversation } }));
       toast.success('DM oluşturuldu! Sol üstten DM sekmesine geçebilirsiniz.');
       onClose();
     } catch (error) {

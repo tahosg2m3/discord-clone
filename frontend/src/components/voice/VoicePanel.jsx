@@ -1,169 +1,114 @@
-// frontend/src/components/voice/VoicePanel.jsx
-import { Mic, MicOff, Headphones, MonitorUp, MonitorOff, Video, VideoOff, PhoneOff, Maximize2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff, Volume2, VolumeX } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
-import { useState, useEffect, useRef } from 'react';
 import VideoGrid from './VideoGrid';
 
-// SESLERİN HER ZAMAN GELMESİ İÇİN GİZLİ BİLEŞEN
-const HiddenAudioPlayer = ({ streams, isDeafened }) => {
-  return (
-    <div style={{ display: 'none' }}>
-      {Object.entries(streams).map(([userId, stream]) => (
-        <AudioStream key={userId} stream={stream} isDeafened={isDeafened} />
-      ))}
-    </div>
-  );
-};
-
-// Tekil ses akışı bileşeni
-const AudioStream = ({ stream, isDeafened }) => {
+function RemoteAudio({ stream, muted }) {
   const audioRef = useRef(null);
 
   useEffect(() => {
-    if (audioRef.current && stream) {
-      audioRef.current.srcObject = stream;
-    }
+    if (!audioRef.current) return;
+    audioRef.current.srcObject = stream;
+    audioRef.current.play().catch(() => {});
   }, [stream]);
 
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.muted = isDeafened;
-    }
-  }, [isDeafened]);
-
-  return <audio ref={audioRef} autoPlay />;
-};
+  return <audio ref={audioRef} autoPlay playsInline muted={muted} />;
+}
 
 export default function VoicePanel() {
   const {
-    inVoiceChannel,
-    isMuted,
-    isDeafened,
-    isSharingScreen,
-    isCameraOn,
-    connectedUsers,
-    remoteStreams, // Gelen yayınlar
+    isInVoice,
+    activeVoiceChannel,
+    leaveVoiceChannel,
     toggleMute,
     toggleDeafen,
+    toggleScreenShare,
     toggleCamera,
-    shareScreen,
-    stopScreenShare,
-    leaveVoiceChannel,
+    isMuted,
+    isDeafened,
+    isScreenSharing,
+    isCameraOn,
+    remoteStreams,
+    canSpeak,
+    canStream,
+    isServerMuted,
+    isServerDeafened,
+    voiceError,
   } = useVoice();
 
-  const [showVideoGrid, setShowVideoGrid] = useState(false);
+  if (!isInVoice || !activeVoiceChannel) return null;
 
-  // Eğer karşıdan görüntü gelirse veya biz açarsak gridi otomatik göster (isteğe bağlı)
-  useEffect(() => {
-    if (isCameraOn || isSharingScreen || Object.keys(remoteStreams).length > 0) {
-      // Burayı true yaparsan otomatik açılır, şu an manuel bıraktım
-      // setShowVideoGrid(true); 
-    }
-  }, [isCameraOn, isSharingScreen, remoteStreams]);
-
-  if (!inVoiceChannel) return null;
-
-  // Gelen yayın var mı? (Ses veya Video)
-  const hasRemoteStreams = Object.keys(remoteStreams).length > 0;
-  const canShowGrid = isCameraOn || isSharingScreen || hasRemoteStreams;
+  const hasRemoteVideo = Object.values(remoteStreams).some(
+    stream => stream.getVideoTracks().length > 0,
+  );
 
   return (
-    <>
-      {/* GİZLİ SES OYNATICI: Video kapalıyken bile sesi garanti eder */}
-      <HiddenAudioPlayer streams={remoteStreams} isDeafened={isDeafened} />
+    <section className="shrink-0 border-t border-white/[0.06] bg-[#151b27] p-4">
+      {Object.entries(remoteStreams).map(([userId, stream]) => (
+        <RemoteAudio key={userId} stream={stream} muted={isDeafened} />
+      ))}
 
-      <div className="bg-gray-900 border-t border-gray-800 p-4">
-        <div className="mb-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">
-            Voice Channel ({connectedUsers.length + 1})
-          </h3>
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2 text-sm">
-                <div className="w-2 h-2 bg-green-500 rounded-full" />
-                <span className="text-gray-300">You</span>
-            </div>
-            {connectedUsers.map((user) => (
-              <div key={user.userId} className="flex items-center space-x-2 text-sm">
-                <div className="w-2 h-2 bg-green-500 rounded-full" />
-                <span className="text-gray-300">{user.username}</span>
-              </div>
-            ))}
-          </div>
+      {(isScreenSharing || isCameraOn || hasRemoteVideo) && <VideoGrid />}
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[13px] font-bold text-[#34d399]">Ses bağlantısı kuruldu</div>
+          <div className="truncate text-[12px] text-[#94a3b8]">{activeVoiceChannel.name}</div>
+          {!canSpeak && <div className="mt-1 text-[11px] text-[#fbbf24]">Dinleyici modu — konuşma yetkin yok</div>}
+          {voiceError && <div className="mt-1 text-[11px] text-[#fca5a5]">{voiceError}</div>}
         </div>
 
-        <div className="flex items-center justify-between space-x-2">
-          <div className="flex space-x-2">
-            {/* Mute */}
-            <button
-              onClick={toggleMute}
-              className={`p-2 rounded-lg transition-colors ${
-                isMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title={isMuted ? 'Unmute' : 'Mute'}
-            >
-              {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
-
-            {/* Deafen */}
-            <button
-              onClick={toggleDeafen}
-              className={`p-2 rounded-lg transition-colors ${
-                isDeafened ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title={isDeafened ? 'Undeafen' : 'Deafen'}
-            >
-              <Headphones className="w-5 h-5" />
-            </button>
-
-            {/* Camera */}
-            <button
-              onClick={toggleCamera}
-              className={`p-2 rounded-lg transition-colors ${
-                isCameraOn ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title={isCameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
-            >
-              {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-            </button>
-
-            {/* Screen Share */}
-            <button
-              onClick={isSharingScreen ? stopScreenShare : shareScreen}
-              className={`p-2 rounded-lg transition-colors ${
-                isSharingScreen ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title={isSharingScreen ? 'Stop Sharing' : 'Share Screen'}
-            >
-              {isSharingScreen ? <MonitorOff className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
-            </button>
-
-            {/* Video Grid Toggle - Artık yayın varsa aktif */}
-            {canShowGrid && (
-              <button
-                onClick={() => setShowVideoGrid(!showVideoGrid)}
-                className={`p-2 rounded-lg transition-colors ${
-                    showVideoGrid ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-                title="Toggle Video Grid"
-              >
-                <Maximize2 className="w-5 h-5" />
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleMute}
+            disabled={!canSpeak || isServerMuted}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${isMuted ? 'bg-[#ef4444] text-white' : 'bg-white/[0.07] text-[#cbd5e1] hover:bg-white/[0.12]'}`}
+            title={!canSpeak ? 'Konuşma yetkin yok' : isServerMuted ? 'Mikrofonun moderatör tarafından susturuldu' : isMuted ? 'Mikrofonu aç' : 'Mikrofonu kapat'}
+          >
+            {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </button>
 
           <button
-            onClick={leaveVoiceChannel}
-            className="p-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
-            title="Leave Voice"
+            type="button"
+            onClick={toggleDeafen}
+            disabled={isServerDeafened}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${isDeafened ? 'bg-[#ef4444] text-white' : 'bg-white/[0.07] text-[#cbd5e1] hover:bg-white/[0.12]'}`}
+            title={isServerDeafened ? 'Sağırlaştırma moderatör tarafından uygulandı' : isDeafened ? 'Sesi aç' : 'Kulaklığı sustur'}
           >
-            <PhoneOff className="w-5 h-5" />
+            {isDeafened ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleScreenShare}
+            disabled={!canStream && !isScreenSharing}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${isScreenSharing ? 'bg-[#2563eb] text-white' : 'bg-white/[0.07] text-[#cbd5e1] hover:bg-white/[0.12]'}`}
+            title={!canStream && !isScreenSharing ? 'Yayın açma yetkin yok' : isScreenSharing ? 'Yayını durdur' : 'Ekranını paylaş'}
+          >
+            <MonitorUp className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleCamera}
+            disabled={!canStream && !isCameraOn}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${isCameraOn ? 'bg-[#2563eb] text-white' : 'bg-white/[0.07] text-[#cbd5e1] hover:bg-white/[0.12]'}`}
+            title={!canStream && !isCameraOn ? 'Kamera açma yetkin yok' : isCameraOn ? 'Kamerayı kapat' : 'Kamerayı aç'}
+          >
+            {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={leaveVoiceChannel}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ef4444] text-white transition-colors hover:bg-[#dc2626]"
+            title="Ses kanalından ayrıl"
+          >
+            <PhoneOff className="h-4 w-4" />
           </button>
         </div>
       </div>
-
-      {showVideoGrid && canShowGrid && (
-        <VideoGrid onClose={() => setShowVideoGrid(false)} />
-      )}
-    </>
+    </section>
   );
 }
