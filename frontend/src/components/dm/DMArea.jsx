@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pin, X } from 'lucide-react';
+import { Pin, Users, X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useDM } from '../../context/DMContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
@@ -8,20 +9,27 @@ import Message from '../chat/Message';
 import MessageInput from '../chat/MessageInput';
 import TypingIndicator from '../chat/TypingIndicator';
 import { getColorForString } from '../../utils/colors';
+import GroupDMAvatar from './GroupDMAvatar';
+import GroupDMDetailsPanel from './GroupDMDetailsPanel';
 
 function updateMessageInList(messages, update) {
   const messageId = update.messageId || update.id;
   return messages.map((message) => message.id === messageId ? { ...message, ...update } : message);
 }
 
+function isGroupConversation(conversation) {
+  return conversation?.type === 'group' || conversation?.isGroupDM;
+}
+
 export default function DMArea() {
-  const { activeDM } = useDM();
+  const { activeDM, setActiveDM } = useDM();
   const { user } = useAuth();
   const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
   const [replyTo, setReplyTo] = useState(null);
   const [showPinned, setShowPinned] = useState(false);
+  const [showGroupDetails, setShowGroupDetails] = useState(false);
   const [firstUnreadId, setFirstUnreadId] = useState(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const messageListRef = useRef(null);
@@ -30,6 +38,7 @@ export default function DMArea() {
   const isNearBottomRef = useRef(true);
   const shouldScrollToBottomRef = useRef(true);
   const channelId = activeDM?.channelId;
+  const conversationId = activeDM?.id;
 
   const markDMRead = useCallback(() => {
     if (!channelId || !user?.id) return;
@@ -39,7 +48,7 @@ export default function DMArea() {
   }, [channelId, socket, user?.id]);
 
   useEffect(() => {
-    if (!activeDM) {
+    if (!conversationId) {
       setMessages([]);
       return undefined;
     }
@@ -49,15 +58,17 @@ export default function DMArea() {
     setTypingUsers([]);
     setReplyTo(null);
     setFirstUnreadId(null);
+    setShowPinned(false);
+    setShowGroupDetails(false);
     shouldScrollToBottomRef.current = true;
-    fetchDMMessages(activeDM.id)
+    fetchDMMessages(conversationId)
       .then((dmMessages) => {
-        if (stillCurrent) setMessages(dmMessages);
+        if (stillCurrent) setMessages(Array.isArray(dmMessages) ? dmMessages : []);
       })
       .catch((error) => console.error('DM mesajları yüklenemedi:', error));
 
     return () => { stillCurrent = false; };
-  }, [activeDM]);
+  }, [conversationId]);
 
   useEffect(() => {
     if (!socket || !channelId || !user) return undefined;
@@ -76,8 +87,12 @@ export default function DMArea() {
       if (message.userId !== user.id && !isNearBottomRef.current) setFirstUnreadId((current) => current || message.id);
       else shouldScrollToBottomRef.current = true;
     };
-    const handleUpdate = (update) => setMessages((current) => updateMessageInList(current, update));
-    const handleDelete = ({ messageId }) => {
+    const handleUpdate = (update) => {
+      if (update.channelId && update.channelId !== channelId) return;
+      setMessages((current) => updateMessageInList(current, update));
+    };
+    const handleDelete = ({ messageId, channelId: deletedFromChannel }) => {
+      if (deletedFromChannel && deletedFromChannel !== channelId) return;
       setMessages((current) => current.filter((message) => message.id !== messageId));
       setReplyTo((current) => current?.id === messageId ? null : current);
     };
@@ -91,11 +106,23 @@ export default function DMArea() {
     const handleTypingInactive = ({ username }) => username && clearTypingUser(username);
     const handleReactionUpdate = (payload) => {
       const update = payload.message || payload;
+      if (update?.channelId && update.channelId !== channelId) return;
       if (update?.messageId || update?.id) setMessages((current) => updateMessageInList(current, update));
     };
     const handlePinUpdate = (payload) => {
       const update = payload.message || payload;
+      if (update?.channelId && update.channelId !== channelId) return;
       if (update?.messageId || update?.id) setMessages((current) => updateMessageInList(current, update));
+    };
+    const handleMessageError = (payload = {}) => {
+      if (!payload.channelId || payload.channelId === channelId) toast.error(payload.message || 'Mesaj gönderilemedi.');
+    };
+    const handleGroupUpdated = ({ conversation } = {}) => {
+      if (conversation?.id !== conversationId) return;
+      setActiveDM((current) => current?.id === conversation.id ? { ...current, ...conversation } : current);
+    };
+    const handleGroupRemoved = ({ conversationId: removedId } = {}) => {
+      if (removedId === conversationId) setActiveDM(null);
     };
 
     socket.on('message:receive', handleReceive);
@@ -105,6 +132,9 @@ export default function DMArea() {
     socket.on('typing:inactive', handleTypingInactive);
     socket.on('message:reaction:update', handleReactionUpdate);
     socket.on('message:pin:update', handlePinUpdate);
+    socket.on('message:error', handleMessageError);
+    socket.on('dm:group-updated', handleGroupUpdated);
+    socket.on('dm:group-removed', handleGroupRemoved);
 
     return () => {
       socket.emit('user:leave', { channelId });
@@ -115,10 +145,13 @@ export default function DMArea() {
       socket.off('typing:inactive', handleTypingInactive);
       socket.off('message:reaction:update', handleReactionUpdate);
       socket.off('message:pin:update', handlePinUpdate);
+      socket.off('message:error', handleMessageError);
+      socket.off('dm:group-updated', handleGroupUpdated);
+      socket.off('dm:group-removed', handleGroupRemoved);
       typingTimersRef.current.forEach((timer) => clearTimeout(timer));
       typingTimersRef.current.clear();
     };
-  }, [channelId, socket, user]);
+  }, [channelId, conversationId, setActiveDM, socket, user]);
 
   useEffect(() => {
     if (!shouldScrollToBottomRef.current) return;
@@ -159,7 +192,7 @@ export default function DMArea() {
 
   if (!activeDM) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center bg-[#111827] text-[#94a3b8] select-none">
+      <div className="flex flex-1 select-none flex-col items-center justify-center bg-[#111827] text-[#94a3b8]">
         <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[#1e293b] shadow-inner"><span className="text-4xl text-[#475569]">@</span></div>
         <h3 className="mb-2 text-xl font-bold text-[#f8fafc]">Arkadaşlarınla mesajlaş</h3>
         <p className="text-[15px]">Bir sohbet başlatmak için sol taraftan birini seç.</p>
@@ -167,19 +200,46 @@ export default function DMArea() {
     );
   }
 
-  const avatarColor = getColorForString(activeDM.otherUser.username);
-  const initial = activeDM.otherUser.username[0].toUpperCase();
+  const groupDM = isGroupConversation(activeDM);
+  const directUser = activeDM.otherUser;
+  if (!groupDM && !directUser) {
+    return <div className="flex flex-1 items-center justify-center bg-[#111827] text-[#94a3b8]">Bu konuşma yüklenemedi.</div>;
+  }
+
+  const title = groupDM ? (activeDM.name || 'Yeni Grup') : directUser.username;
+  const avatarColor = getColorForString(title);
+  const initial = title[0].toUpperCase();
   const pinnedMessages = messages.filter((message) => message.isPinned);
+  const mentionSuggestions = groupDM
+    ? (activeDM.members || []).filter((member) => String(member.id) !== String(user.id))
+    : [directUser];
+
+  const handleGroupUpdated = (conversation) => {
+    if (!conversation?.id) return;
+    setActiveDM((current) => current?.id === conversation.id ? { ...current, ...conversation } : current);
+  };
+  const handleGroupLeft = () => {
+    socket?.emit('user:leave', { channelId });
+    setActiveDM(null);
+  };
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col bg-[#111827]">
       <div className="z-10 flex h-14 shrink-0 items-center border-b border-white/[0.06] bg-[#111827]/90 px-5 backdrop-blur">
-        <div className="flex items-center gap-3"><span className="select-none text-xl font-medium text-[#94a3b8]">@</span><span className="font-semibold text-[#f8fafc]">{activeDM.otherUser.username}</span>{activeDM.otherUser.status === 'online' && <div className="h-2.5 w-2.5 rounded-full bg-[#23A559]" />}</div>
-        <button type="button" onClick={() => setShowPinned((show) => !show)} className={`ml-auto rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showPinned ? 'text-[#fbbf24]' : ''}`} title="Sabitlenmiş mesajlar" aria-label="Sabitlenmiş mesajlar"><Pin className="h-5 w-5" /></button>
+        <div className="flex min-w-0 items-center gap-3">
+          {groupDM ? <GroupDMAvatar conversation={activeDM} size={30} /> : <span className="select-none text-xl font-medium text-[#94a3b8]">@</span>}
+          <span className="truncate font-semibold text-[#f8fafc]">{title}</span>
+          {!groupDM && (directUser.presenceStatus === 'online' || directUser.status === 'online') && <div className="h-2.5 w-2.5 rounded-full bg-[#23A559]" />}
+          {groupDM && <span className="hidden text-xs text-[#64748b] sm:inline">{activeDM.memberIds?.length || activeDM.members?.length || 0} üye</span>}
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          {groupDM && <button type="button" onClick={() => setShowGroupDetails((show) => !show)} className={`rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showGroupDetails ? 'bg-white/[0.07] text-white' : ''}`} title="Grup üyeleri" aria-label="Grup üyeleri"><Users className="h-5 w-5" /></button>}
+          <button type="button" onClick={() => setShowPinned((show) => !show)} className={`rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showPinned ? 'text-[#fbbf24]' : ''}`} title="Sabitlenmiş mesajlar" aria-label="Sabitlenmiş mesajlar"><Pin className="h-5 w-5" /></button>
+        </div>
       </div>
 
       {showPinned && (
-        <div className="absolute right-5 top-16 z-40 w-80 overflow-hidden rounded-xl border border-white/[0.1] bg-[#1e293b] shadow-2xl shadow-black/40">
+        <div className="absolute top-16 z-40 w-80 overflow-hidden rounded-xl border border-white/[0.1] bg-[#1e293b] shadow-2xl shadow-black/40" style={{ right: showGroupDetails ? 316 : 20 }}>
           <div className="flex items-center justify-between border-b border-white/[0.08] px-3 py-2.5"><span className="text-sm font-semibold text-[#f8fafc]">Sabitlenmiş mesajlar</span><button type="button" onClick={() => setShowPinned(false)} className="rounded p-1 text-[#94a3b8] hover:bg-white/[0.08] hover:text-white"><X className="h-4 w-4" /></button></div>
           <div className="custom-scrollbar max-h-72 overflow-y-auto p-2">{pinnedMessages.length === 0 ? <p className="p-3 text-sm text-[#94a3b8]">Sabitlenmiş mesaj yok.</p> : pinnedMessages.map((message) => <button key={message.id} type="button" onClick={() => { setShowPinned(false); document.getElementById(`message-${message.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }} className="block w-full rounded-lg px-2 py-2 text-left hover:bg-white/[0.06]"><span className="mr-2 text-xs font-semibold text-[#93c5fd]">{message.username}</span><span className="text-sm text-[#cbd5e1]">{message.content || 'Ekli mesaj'}</span></button>)}</div>
         </div>
@@ -187,9 +247,9 @@ export default function DMArea() {
 
       <div ref={messageListRef} onScroll={handleScroll} className="custom-scrollbar flex-1 overflow-y-auto px-5 py-4">
         <div className="mb-7 mt-5 border-b border-white/[0.06] pb-6">
-          {activeDM.otherUser.avatar && !activeDM.otherUser.avatar.includes('ui-avatars.com') ? <img src={activeDM.otherUser.avatar} className="mb-4 h-20 w-20 rounded-full object-cover" alt="" /> : <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full text-3xl font-bold text-white" style={{ backgroundColor: avatarColor }}>{initial}</div>}
-          <h1 className="mb-2 text-3xl font-bold text-[#f8fafc]">{activeDM.otherUser.username}</h1>
-          <p className="text-[15px] text-[#94a3b8]">Bu, <strong>{activeDM.otherUser.username}</strong> ile olan mesaj geçmişinin başlangıcıdır.</p>
+          {groupDM ? <div className="mb-4"><GroupDMAvatar conversation={activeDM} size={80} /></div> : directUser.avatar && !directUser.avatar.includes('ui-avatars.com') ? <img src={directUser.avatar} className="mb-4 h-20 w-20 rounded-full object-cover" alt="" /> : <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full text-3xl font-bold text-white" style={{ backgroundColor: avatarColor }}>{initial}</div>}
+          <h1 className="mb-2 text-3xl font-bold text-[#f8fafc]">{title}</h1>
+          <p className="text-[15px] text-[#94a3b8]">{groupDM ? <>Bu, <strong>{title}</strong> grup mesajının başlangıcıdır.</> : <>Bu, <strong>{directUser.username}</strong> ile olan mesaj geçmişinin başlangıcıdır.</>}</p>
         </div>
 
         {messages.map((message, index) => {
@@ -198,7 +258,7 @@ export default function DMArea() {
           return (
             <div id={`message-${message.id}`} key={message.id}>
               {firstUnreadId === message.id && <div className="my-3 flex items-center gap-2 text-xs font-semibold text-[#f87171]"><div className="h-px flex-1 bg-[#ef4444]/70" /><span>Yeni mesajlar</span><div className="h-px flex-1 bg-[#ef4444]/70" /></div>}
-              <Message message={message} isOwn={message.userId === user.id} grouped={grouped} userId={user.id} currentUsername={user.username} onReply={setReplyTo} onReaction={handleReaction} onPin={handlePin} />
+              <Message message={message} isOwn={message.userId === user.id} grouped={grouped} userId={user.id} currentUsername={user.username} canPinMessages onReply={setReplyTo} onReaction={handleReaction} onPin={handlePin} />
             </div>
           );
         })}
@@ -207,7 +267,9 @@ export default function DMArea() {
 
       {!isNearBottom && firstUnreadId && <button type="button" onClick={() => { shouldScrollToBottomRef.current = true; messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); markDMRead(); }} className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-[#2563eb] px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-black/30 transition-colors hover:bg-[#3b82f6]">Yeni mesajlara git</button>}
       <div className="shrink-0 px-5 pb-2 pt-1"><TypingIndicator users={typingUsers} /></div>
-      <div className="shrink-0 px-5 pb-5 pt-2"><MessageInput onSendMessage={handleSendMessage} onTypingStart={() => socket?.emit('typing:start', { channelId })} onTypingStop={() => socket?.emit('typing:stop', { channelId })} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} placeholder={`@${activeDM.otherUser.username} kişisine mesaj gönder`} /></div>
+      <div className="shrink-0 px-5 pb-5 pt-2"><MessageInput onSendMessage={handleSendMessage} onTypingStart={() => socket?.emit('typing:start', { channelId })} onTypingStop={() => socket?.emit('typing:stop', { channelId })} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} draftKey={`dm:${channelId}:${user?.id || 'guest'}`} mentionSuggestions={mentionSuggestions} placeholder={groupDM ? `${title} grubuna mesaj gönder` : `@${directUser.username} kişisine mesaj gönder`} /></div>
+
+      {groupDM && showGroupDetails && <div className="absolute inset-y-0 right-0 z-50"><GroupDMDetailsPanel conversation={activeDM} onClose={() => setShowGroupDetails(false)} onUpdated={handleGroupUpdated} onLeft={handleGroupLeft} /></div>}
     </div>
   );
 }

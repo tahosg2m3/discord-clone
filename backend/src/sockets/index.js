@@ -12,7 +12,7 @@ const activeUserSockets = new Map();
 
 function getUserServerIds(userId) {
   return storage.getAllServers()
-    .filter(server => storage.isServerMember(server.id, userId))
+    .filter(server => !server.isDM && storage.isServerMember(server.id, userId))
     .map(server => server.id);
 }
 
@@ -65,7 +65,14 @@ module.exports = (io) => {
     // Eski istemcinin gönderdiği userId/username artık güvenilmez. Kimlik sadece JWT'den gelir.
     socket.on('authenticate', () => {
       if (socket.userData.authenticated) {
-        socket.emit('presence:ready');
+        const currentUser = storage.getUserById(socket.authUser?.id);
+        const selectedStatus = storage.PRESENCE_STATUSES.includes(currentUser?.presenceStatus)
+          ? currentUser.presenceStatus
+          : 'online';
+        socket.emit('presence:ready', {
+          status: selectedStatus,
+          visibleStatus: selectedStatus === 'invisible' ? 'offline' : selectedStatus,
+        });
         return;
       }
 
@@ -86,7 +93,11 @@ module.exports = (io) => {
       activeUserSockets.set(user.id, userSockets);
 
       socket.join(`user:${user.id}`);
-      storage.updateUserStatus(user.id, 'online');
+      const selectedStatus = storage.PRESENCE_STATUSES.includes(user.presenceStatus)
+        ? user.presenceStatus
+        : 'online';
+      const publicStatus = selectedStatus === 'invisible' ? 'offline' : selectedStatus;
+      storage.updateUserStatus(user.id, publicStatus);
 
       getUserServerIds(user.id).forEach(serverId => socket.join(`server:${serverId}`));
 
@@ -95,13 +106,13 @@ module.exports = (io) => {
           io.to(`user:${friend.id}`).emit('status:update', {
             userId: user.id,
             username: user.username,
-            status: 'online',
+            status: publicStatus,
           });
         });
-        broadcastPresence(io, user.id, 'online');
+        broadcastPresence(io, user.id, publicStatus);
       }
 
-      socket.emit('presence:ready');
+      socket.emit('presence:ready', { status: selectedStatus, visibleStatus: publicStatus });
     });
 
     socket.on('user:join', ensureAuthenticated(data => userHandler.handleJoin(io, socket, data)));

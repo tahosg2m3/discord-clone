@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
+  CalendarDays,
+  Folder,
+  Image,
+  Megaphone,
+  MessageSquare,
+  Radio,
   Copy,
   Crown,
   Hash,
   Headphones,
+  Mic,
   LogOut,
   MicOff,
   MoreHorizontal,
@@ -12,6 +19,7 @@ import {
   Plus,
   Settings,
   Shield,
+  Sparkles,
   Trash2,
   UserCog,
   UserPlus,
@@ -26,6 +34,9 @@ import { useSocket } from '../../context/SocketContext';
 import { useVoice } from '../../context/VoiceContext';
 import MemberManagementModal from '../server/MemberManagementModal';
 import ServerSettingsModal from '../server/ServerSettingsModal';
+import ServerPlatformModal from '../server/ServerPlatformModal';
+import ChannelSettingsModal from '../server/ChannelSettingsModal';
+import ServerProfileModal from '../profile/ServerProfileModal';
 import {
   createManagedChannel,
   getEffectivePermissions,
@@ -61,17 +72,23 @@ export default function ChannelList() {
   const [channels, setChannels] = useState([]);
   const [createType, setCreateType] = useState(null);
   const [newChannelName, setNewChannelName] = useState('');
+  const [channelKind, setChannelKind] = useState('text');
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showMemberManager, setShowMemberManager] = useState(false);
+  const [platformTab, setPlatformTab] = useState(null);
+  const [settingsChannel, setSettingsChannel] = useState(null);
+  const [showServerProfile, setShowServerProfile] = useState(false);
   const [openChannelMenu, setOpenChannelMenu] = useState(null);
   const [openVoiceMenu, setOpenVoiceMenu] = useState(null);
   const [roles, setRoles] = useState([]);
   const [members, setMembers] = useState([]);
   const [permissionMap, setPermissionMap] = useState({});
   const [voiceOverrides, setVoiceOverrides] = useState({});
+  const [unreadByChannel, setUnreadByChannel] = useState({});
   const menuRef = useRef(null);
   const floatingRef = useRef(null);
+  const channelLoadIdRef = useRef(0);
 
   const isOwner = Boolean(currentServer?.creatorId && currentServer.creatorId === user?.id);
   const currentMember = useMemo(() => members.find((member) => getMemberId(member) === user?.id), [members, user?.id]);
@@ -86,6 +103,14 @@ export default function ChannelList() {
   useEffect(() => {
     if (!currentServer?.id) return undefined;
 
+    setChannels([]);
+    setRoles([]);
+    setMembers([]);
+    setPermissionMap({});
+    setVoiceOverrides({});
+    setUnreadByChannel({});
+    setOpenChannelMenu(null);
+    setOpenVoiceMenu(null);
     loadChannels();
     requestVoiceChannelMembers(currentServer.id);
 
@@ -127,6 +152,24 @@ export default function ChannelList() {
   }, [socket, currentServer?.id]);
 
   useEffect(() => {
+    if (!socket || !currentServer?.id) return undefined;
+    const receive = (message) => {
+      if (!message?.channelId || message.userId === user?.id || message.channelId === currentChannel?.id) return;
+      if (!channels.some(channel => channel.id === message.channelId && channel.serverId === currentServer.id)) return;
+      const mentioned = message.mentions?.includes?.(user?.id) || message.content?.toLocaleLowerCase('tr-TR').includes(`@${user?.username || ''}`.toLocaleLowerCase('tr-TR'));
+      setUnreadByChannel(current => ({
+        ...current,
+        [message.channelId]: {
+          count: Math.min(99, (current[message.channelId]?.count || 0) + 1),
+          mentions: (current[message.channelId]?.mentions || 0) + (mentioned ? 1 : 0),
+        },
+      }));
+    };
+    socket.on('message:receive', receive);
+    return () => socket.off('message:receive', receive);
+  }, [channels, currentChannel?.id, currentServer?.id, socket, user?.id, user?.username]);
+
+  useEffect(() => {
     const handleClickOutside = (event) => {
       if (menuRef.current && !menuRef.current.contains(event.target)) setShowServerMenu(false);
       if (floatingRef.current && !floatingRef.current.contains(event.target)) {
@@ -140,14 +183,20 @@ export default function ChannelList() {
 
   async function loadChannels() {
     if (!currentServer?.id) return;
+    const requestId = ++channelLoadIdRef.current;
+    const requestedServerId = currentServer.id;
     try {
-      const data = await fetchChannels(currentServer.id);
+      const data = await fetchChannels(requestedServerId);
+      if (requestId !== channelLoadIdRef.current) return;
       setChannels(data);
       const currentStillExists = data.some((channel) => channel.id === currentChannel?.id);
-      if (data.length && (!currentChannel || currentChannel.serverId !== currentServer.id || !currentStillExists)) {
-        setCurrentChannel(data[0]);
+      if (data.length && (!currentChannel || currentChannel.serverId !== requestedServerId || !currentStillExists)) {
+        setCurrentChannel(data.find(channel => channel.type !== 'category') || null);
+      } else if (!data.length) {
+        setCurrentChannel(null);
       }
     } catch (error) {
+      if (requestId !== channelLoadIdRef.current) return;
       console.error('Kanallar yüklenemedi:', error);
       toast.error('Kanallar yüklenemedi.');
     }
@@ -159,12 +208,14 @@ export default function ChannelList() {
     if (!channelName || !createType || !currentServer?.id) return;
 
     try {
-      const channel = await createManagedChannel(currentServer.id, channelName, createType, user.id);
+      const typeToCreate = createType === 'text' || createType === 'voice' ? channelKind : createType;
+      const channel = await createManagedChannel(currentServer.id, channelName, typeToCreate, user.id);
       setChannels((previous) => [...previous, channel]);
       setNewChannelName('');
       setCreateType(null);
+      setChannelKind('text');
       setCurrentChannel(channel);
-      toast.success(`${createType === 'voice' ? 'Sesli' : 'Metin'} kanalı oluşturuldu.`);
+      toast.success('Kanal oluşturuldu.');
     } catch (error) {
       toast.error(error.message || 'Kanal oluşturulamadı.');
     }
@@ -187,8 +238,9 @@ export default function ChannelList() {
   };
 
   const handleChannelClick = (channel) => {
+    setUnreadByChannel(current => ({ ...current, [channel.id]: { count: 0, mentions: 0 } }));
     setCurrentChannel({ ...channel, previous: currentChannel?.id });
-    if (channel.type === 'voice') joinVoiceChannel(channel);
+    if (channel.type === 'voice' || channel.type === 'stage') joinVoiceChannel(channel);
   };
 
   const handleLeaveServer = async () => {
@@ -264,20 +316,44 @@ export default function ChannelList() {
     });
   };
 
-  const textChannels = channels.filter((channel) => !channel.type || channel.type === 'text');
-  const voiceChannels = channels.filter((channel) => channel.type === 'voice');
+  const emitStageModeration = (action, participant, channel) => {
+    const targetUserId = getVoiceParticipantId(participant);
+    if (!socket || !targetUserId || !canDisconnectMembers) return;
+    socket.emit('voice:stage:moderate', { action, targetUserId, channelId: channel.id }, result => {
+      if (!result?.success) toast.error(result?.error || 'Stage işlemi uygulanamadı.');
+      else { toast.success('Stage rolü güncellendi.'); setOpenVoiceMenu(null); requestVoiceChannelMembers(currentServer?.id); }
+    });
+  };
+
+  const byPosition = (first, second) => (Number(first.position ?? Number.MAX_SAFE_INTEGER) - Number(second.position ?? Number.MAX_SAFE_INTEGER)) || first.name.localeCompare(second.name, 'tr');
+  const categories = channels.filter((channel) => channel.type === 'category').sort(byPosition);
+  const categoryOrder = new Map(categories.map((category, index) => [category.id, index]));
+  const byCategoryAndPosition = (first, second) => {
+    const firstCategory = first.categoryId ? (categoryOrder.get(first.categoryId) ?? categoryOrder.size) : -1;
+    const secondCategory = second.categoryId ? (categoryOrder.get(second.categoryId) ?? categoryOrder.size) : -1;
+    return firstCategory - secondCategory || byPosition(first, second);
+  };
+  const textChannels = channels.filter((channel) => !channel.type || ['text', 'announcement', 'forum', 'media'].includes(channel.type)).sort(byCategoryAndPosition);
+  const voiceChannels = channels.filter((channel) => ['voice', 'stage'].includes(channel.type)).sort(byCategoryAndPosition);
 
   const renderCreateForm = (type) => {
     if (createType !== type) return null;
     return (
       <form onSubmit={handleCreateChannel} className="px-2 pb-2">
+        <select
+          value={channelKind}
+          onChange={(event) => setChannelKind(event.target.value)}
+          className="mb-2 w-full rounded-[4px] border border-white/[0.08] bg-[#1E1F22] px-2.5 py-2 text-xs text-[#DBDEE1] outline-none focus:border-[#00A8FC]"
+        >
+          {type === 'voice' ? <><option value="voice">Ses kanalı</option><option value="stage">Stage kanalı</option></> : <><option value="text">Metin kanalı</option><option value="announcement">Duyuru kanalı</option><option value="forum">Forum kanalı</option><option value="media">Medya kanalı</option><option value="category">Kategori</option></>}
+        </select>
         <label className="sr-only" htmlFor={`new-${type}-channel`}>Kanal adı</label>
         <input
           id={`new-${type}-channel`}
           type="text"
           value={newChannelName}
           onChange={(event) => setNewChannelName(event.target.value)}
-          placeholder={`${type === 'voice' ? 'sesli' : 'metin'}-kanalı`}
+          placeholder={`${channelKind === 'category' ? 'kategori' : channelKind === 'stage' ? 'stage' : type === 'voice' ? 'sesli' : 'metin'}-kanalı`}
           maxLength={50}
           className="w-full rounded-[4px] border border-[#00A8FC] bg-[#1E1F22] px-2.5 py-2 text-sm text-white outline-none placeholder:text-[#72767D]"
           autoFocus
@@ -296,6 +372,8 @@ export default function ChannelList() {
   const renderChannel = (channel) => {
     const isActive = currentChannel?.id === channel.id;
     const isMenuOpen = openChannelMenu === channel.id;
+    const unread = unreadByChannel[channel.id];
+    const ChannelIcon = channel.type === 'announcement' ? Megaphone : channel.type === 'forum' ? MessageSquare : channel.type === 'media' ? Image : Hash;
     return (
       <div key={channel.id} className="group relative px-2" ref={isMenuOpen ? floatingRef : null}>
         <button
@@ -303,8 +381,9 @@ export default function ChannelList() {
           onClick={() => handleChannelClick(channel)}
           className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left transition ${isActive ? 'bg-[#404249] text-white shadow-sm' : 'text-[#949BA4] hover:bg-[#35373C] hover:text-[#DBDEE1]'}`}
         >
-          <Hash className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />
+          <ChannelIcon className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
+          {unread?.mentions > 0 ? <span className="ml-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-[#ef4444] px-1 text-[10px] font-bold text-white">{unread.mentions > 9 ? '9+' : unread.mentions}</span> : unread?.count > 0 ? <span className="ml-1 h-2 w-2 rounded-full bg-[#f8fafc]" title={`${unread.count} okunmamış mesaj`} /> : null}
         </button>
         {canManageChannels && (
           <button
@@ -318,6 +397,7 @@ export default function ChannelList() {
         )}
         {isMenuOpen && (
           <div className="absolute right-2 top-10 z-50 w-40 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+            <button type="button" onClick={() => { setSettingsChannel(channel); setOpenChannelMenu(null); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><Settings className="h-3.5 w-3.5" /> Kanal ayarları</button>
             <button type="button" onClick={() => handleDeleteChannel(channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10">
               <Trash2 className="h-3.5 w-3.5" /> Kanalı sil
             </button>
@@ -354,6 +434,20 @@ export default function ChannelList() {
                 <UserPlus className="h-4 w-4" /> İnsanları davet et
               </button>
 
+              <button type="button" onClick={() => { setPlatformTab('events'); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
+                <CalendarDays className="h-4 w-4" /> Etkinlikler
+              </button>
+
+              <button type="button" onClick={() => { setShowServerProfile(true); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
+                <UserCog className="h-4 w-4" /> Sunucu profilini düzenle
+              </button>
+
+              {(
+                <button type="button" onClick={() => { setPlatformTab('invites'); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
+                  <Sparkles className="h-4 w-4" /> Topluluk merkezi
+                </button>
+              )}
+
               {isOwner && (
                 <button type="button" onClick={() => { setShowServerSettings(true); setShowServerMenu(false); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-[#DBDEE1] transition hover:bg-[#35373C] hover:text-white">
                   <Settings className="h-4 w-4" /> Sunucu ayarları
@@ -379,11 +473,20 @@ export default function ChannelList() {
         </header>
 
         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto py-3" onClick={() => setShowServerMenu(false)}>
+          {categories.length > 0 && (
+            <section className="pb-2">
+              {categories.map(category => (
+                <div key={category.id} className="group relative px-3 py-1" ref={openChannelMenu === category.id ? floatingRef : null}>
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-[#949BA4]"><Folder className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{category.name}</span>{canManageChannels && <button type="button" onClick={() => setSettingsChannel(category)} className="rounded p-1 opacity-0 hover:bg-[#35373C] hover:text-white group-hover:opacity-100"><Settings className="h-3.5 w-3.5" /></button>}</div>
+                </div>
+              ))}
+            </section>
+          )}
           <section className="pb-3">
             <div className="mb-1 flex items-center justify-between px-4">
               <span className="flex items-center text-[11px] font-bold uppercase tracking-wide text-[#949BA4]"><ChevronDown className="mr-0.5 h-3.5 w-3.5" /> Metin Kanalları</span>
               {canManageChannels && (
-                <button type="button" onClick={() => setCreateType(createType === 'text' ? null : 'text')} title="Metin kanalı oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
+                <button type="button" onClick={() => { const opening = createType !== 'text'; setCreateType(opening ? 'text' : null); if (opening) setChannelKind('text'); }} title="Kanal oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
               )}
             </div>
             {renderCreateForm('text')}
@@ -394,7 +497,7 @@ export default function ChannelList() {
             <div className="mb-1 flex items-center justify-between px-4">
               <span className="flex items-center text-[11px] font-bold uppercase tracking-wide text-[#949BA4]"><ChevronDown className="mr-0.5 h-3.5 w-3.5" /> Sesli Kanallar</span>
               {canManageChannels && (
-                <button type="button" onClick={() => setCreateType(createType === 'voice' ? null : 'voice')} title="Sesli kanal oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
+                <button type="button" onClick={() => { const opening = createType !== 'voice'; setCreateType(opening ? 'voice' : null); if (opening) setChannelKind('voice'); }} title="Sesli veya Stage kanalı oluştur" className="rounded p-1 text-[#949BA4] transition hover:bg-[#35373C] hover:text-white"><Plus className="h-4 w-4" /></button>
               )}
             </div>
             {renderCreateForm('voice')}
@@ -406,7 +509,7 @@ export default function ChannelList() {
                 return (
                   <div key={channel.id} className="group relative px-2" ref={openChannelMenu === channel.id ? floatingRef : null}>
                     <button type="button" onClick={() => handleChannelClick(channel)} className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left transition ${isActive ? 'bg-[#404249] text-white shadow-sm' : 'text-[#949BA4] hover:bg-[#35373C] hover:text-[#DBDEE1]'}`}>
-                      <Volume2 className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />
+                      {channel.type === 'stage' ? <Radio className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" /> : <Volume2 className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />}
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
                     </button>
                     {canManageChannels && (
@@ -416,6 +519,7 @@ export default function ChannelList() {
                     )}
                     {openChannelMenu === channel.id && (
                       <div className="absolute right-2 top-10 z-50 w-40 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+                        <button type="button" onClick={() => { setSettingsChannel(channel); setOpenChannelMenu(null); }} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><Settings className="h-3.5 w-3.5" /> Kanal ayarları</button>
                         <button type="button" onClick={() => handleDeleteChannel(channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10"><Trash2 className="h-3.5 w-3.5" /> Kanalı sil</button>
                       </div>
                     )}
@@ -435,6 +539,7 @@ export default function ChannelList() {
                           <div className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 transition-all ${isSpeaking ? 'border-[#34D399] bg-[#34D399]/10 shadow-[0_0_12px_rgba(52,211,153,0.18)]' : 'border-transparent hover:bg-white/[0.04]'}`}>
                             <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${isSpeaking ? 'bg-[#34D399]' : 'bg-[#475569]'}`}>{displayName[0]?.toUpperCase() || '?'}</div>
                             <span className={`min-w-0 flex-1 truncate text-[12px] ${isSpeaking ? 'font-semibold text-[#D1FAE5]' : 'text-[#CBD5E1]'}`}>{displayName}</span>
+                            {participant.requestedToSpeak && <span className="shrink-0 rounded-full bg-[#f59e0b]/15 px-1.5 py-0.5 text-[9px] font-bold text-[#fbbf24]">Söz istiyor</span>}
                             {isMuted && <MicOff className="h-3.5 w-3.5 shrink-0 text-[#ED4245]" title="Susturuldu" />}
                             {isDeafened && <Headphones className="h-3.5 w-3.5 shrink-0 text-[#ED4245]" title="Sağırlaştırıldı" />}
                             {isSpeaking && !isMuted && <VolumeX className="h-3.5 w-3.5 shrink-0 rotate-180 text-[#34D399]" />}
@@ -444,6 +549,8 @@ export default function ChannelList() {
                           </div>
                           {openVoiceMenu === voiceMenuKey && (
                             <div className="absolute right-0 top-8 z-[60] w-48 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+                              {channel.type === 'stage' && canDisconnectMembers && participant.requestedToSpeak && <button type="button" onClick={() => emitStageModeration('approve', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#34d399] transition hover:bg-[#34d399]/10"><Mic className="h-3.5 w-3.5" /> Söz hakkı ver</button>}
+                              {channel.type === 'stage' && canDisconnectMembers && participant.stageRole === 'speaker' && <button type="button" onClick={() => emitStageModeration('audience', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><VolumeX className="h-3.5 w-3.5" /> Dinleyici yap</button>}
                               {canMuteMembers && <button type="button" onClick={() => emitVoiceModeration(isMuted ? 'unmute' : 'mute', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><MicOff className="h-3.5 w-3.5" /> {isMuted ? 'Susturmayı kaldır' : 'Sustur'}</button>}
                               {canDeafenMembers && <button type="button" onClick={() => emitVoiceModeration(isDeafened ? 'undeafen' : 'deafen', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><Headphones className="h-3.5 w-3.5" /> {isDeafened ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'}</button>}
                               {canDisconnectMembers && <button type="button" onClick={() => emitVoiceModeration('disconnect', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10"><PhoneOff className="h-3.5 w-3.5" /> Kanaldan çıkar</button>}
@@ -461,6 +568,9 @@ export default function ChannelList() {
       </div>
 
       {showServerSettings && <ServerSettingsModal onClose={() => setShowServerSettings(false)} />}
+      {platformTab && <ServerPlatformModal initialTab={platformTab} canManage={canManageMembers || canManageChannels} permissions={permissions} isOwner={isOwner} onClose={() => setPlatformTab(null)} />}
+      {settingsChannel && <ChannelSettingsModal channel={settingsChannel} channels={channels} roles={roles} members={members} onUpdated={(updated) => { setChannels(current => current.map(item => item.id === updated.id ? { ...item, ...updated } : item)); if (currentChannel?.id === updated.id) setCurrentChannel(current => ({ ...current, ...updated })); setSettingsChannel(null); }} onClose={() => setSettingsChannel(null)} />}
+      {showServerProfile && <ServerProfileModal server={currentServer} member={currentMember} user={user} onUpdated={(updated) => setMembers(current => current.map(item => getMemberId(item) === user?.id ? { ...item, ...updated } : item))} onClose={() => setShowServerProfile(false)} />}
       {showMemberManager && (
         <MemberManagementModal
           serverId={currentServer?.id}

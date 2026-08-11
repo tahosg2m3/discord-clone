@@ -1,57 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Search, Loader2 } from 'lucide-react';
 
-const TENOR_API_KEY = 'AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ'; // Public test key
+const TENOR_API_KEY = String(import.meta.env.VITE_TENOR_API_KEY || '').trim();
 
 export default function GifPicker({ onClose, onSelectGif }) {
   const [search, setSearch] = useState('');
   const [gifs, setGifs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    loadTrendingGifs();
-  }, []);
+    if (!TENOR_API_KEY) return undefined;
 
-  useEffect(() => {
-    if (search) {
-      const timer = setTimeout(() => {
-        searchGifs(search);
-      }, 500);
-      return () => clearTimeout(timer);
-    } else {
-      loadTrendingGifs();
-    }
+    const controller = new AbortController();
+    const query = search.trim();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const endpoint = query ? 'search' : 'featured';
+        const params = new URLSearchParams({ key: TENOR_API_KEY, limit: '20' });
+        if (query) params.set('q', query);
+        const response = await fetch(`https://tenor.googleapis.com/v2/${endpoint}?${params}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Tenor isteği başarısız (${response.status})`);
+        const data = await response.json();
+        setGifs(Array.isArray(data.results) ? data.results : []);
+      } catch (requestError) {
+        if (requestError.name === 'AbortError') return;
+        console.error('Failed to load GIFs:', requestError);
+        setGifs([]);
+        setError('GIF listesi şu anda yüklenemedi. Biraz sonra tekrar dene.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, query ? 500 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [search]);
-
-  const loadTrendingGifs = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `https://tenor.googleapis.com/v2/featured?key=${TENOR_API_KEY}&limit=20`
-      );
-      const data = await response.json();
-      setGifs(data.results || []);
-    } catch (error) {
-      console.error('Failed to load trending GIFs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const searchGifs = async (query) => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(query)}&key=${TENOR_API_KEY}&limit=20`
-      );
-      const data = await response.json();
-      setGifs(data.results || []);
-    } catch (error) {
-      console.error('Failed to search GIFs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSelectGif = (gif) => {
     const gifUrl = gif.media_formats?.gif?.url || gif.media_formats?.mediumgif?.url;
@@ -86,9 +76,10 @@ export default function GifPicker({ onClose, onSelectGif }) {
             <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#94a3b8]" />
             <input
               type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="GIF ara..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="GIF ara..."
+            disabled={!TENOR_API_KEY}
               className="w-full rounded-xl border border-white/[0.07] bg-[#111827] py-2.5 pl-10 pr-4 text-[#f8fafc] outline-none transition-colors placeholder:text-[#64748b] focus:border-[#3b82f6]"
               autoFocus
             />
@@ -97,10 +88,16 @@ export default function GifPicker({ onClose, onSelectGif }) {
 
         {/* GIF Grid */}
         <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
-          {loading ? (
+          {!TENOR_API_KEY ? (
+            <div className="flex h-44 items-center justify-center px-6 text-center text-sm leading-6 text-[#94a3b8]">
+              GIF araması yapılandırılmamış. Frontend ortamına <code className="mx-1 rounded bg-black/20 px-1.5 py-0.5 text-[#cbd5e1]">VITE_TENOR_API_KEY</code> ekle.
+            </div>
+          ) : loading ? (
             <div className="flex h-44 items-center justify-center">
               <Loader2 className="h-7 w-7 animate-spin text-[#60a5fa]" />
             </div>
+          ) : error ? (
+            <div className="flex h-44 items-center justify-center px-6 text-center text-sm text-[#fca5a5]">{error}</div>
           ) : (
             <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
               {gifs.map((gif) => (
@@ -122,7 +119,7 @@ export default function GifPicker({ onClose, onSelectGif }) {
             </div>
           )}
 
-          {!loading && gifs.length === 0 && (
+          {TENOR_API_KEY && !loading && !error && gifs.length === 0 && (
             <div className="flex h-44 items-center justify-center text-[#94a3b8]">
               <p>GIF bulunamadı.</p>
             </div>

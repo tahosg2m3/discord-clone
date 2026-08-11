@@ -1,5 +1,6 @@
 const { userService } = require('../../services/userService');
 const storage = require('../../storage/inMemory');
+const { platformService } = require('../../services/platformService');
 
 function canViewChannel(channelId, userId) {
   const channel = storage.getChannelById(channelId);
@@ -7,7 +8,7 @@ function canViewChannel(channelId, userId) {
   if (!channel || !server) return false;
   if (server.isDM) return Boolean(server.dmUserIds?.includes(userId));
   return storage.isServerMember(server.id, userId)
-    && storage.hasPermission(server.id, userId, 'VIEW_CHANNEL');
+    && platformService.hasChannelPermission(channel.id, userId, 'VIEW_CHANNEL');
 }
 
 exports.handleJoin = (io, socket, data = {}) => {

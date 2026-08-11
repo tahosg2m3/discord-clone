@@ -42,6 +42,11 @@ export default function ServerSettingsModal({ onClose }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [serverName, setServerName] = useState(currentServer?.name || '');
   const [serverIcon, setServerIcon] = useState(currentServer?.icon || '');
+  const [serverBanner, setServerBanner] = useState(currentServer?.banner || '');
+  const [description, setDescription] = useState(currentServer?.description || '');
+  const [discoveryEnabled, setDiscoveryEnabled] = useState(Boolean(currentServer?.discoveryEnabled));
+  const [vanityCode, setVanityCode] = useState(currentServer?.vanityCode || '');
+  const [defaultNotificationMode, setDefaultNotificationMode] = useState(currentServer?.defaultNotificationMode || 'mentions');
   const [roles, setRoles] = useState([]);
   const [members, setMembers] = useState([]);
   const [permissions, setPermissions] = useState({});
@@ -58,6 +63,11 @@ export default function ServerSettingsModal({ onClose }) {
 
     setServerName(currentServer.name || '');
     setServerIcon(currentServer.icon || '');
+    setServerBanner(currentServer.banner || '');
+    setDescription(currentServer.description || '');
+    setDiscoveryEnabled(Boolean(currentServer.discoveryEnabled));
+    setVanityCode(currentServer.vanityCode || '');
+    setDefaultNotificationMode(currentServer.defaultNotificationMode || 'mentions');
     setIsLoading(true);
 
     Promise.all([getServerRoles(currentServer.id), getServerMembers(currentServer.id)])
@@ -102,6 +112,11 @@ export default function ServerSettingsModal({ onClose }) {
       const updated = await updateServerDetails(currentServer.id, {
         name: serverName.trim(),
         icon: serverIcon.trim(),
+        banner: serverBanner.trim(),
+        description: description.trim(),
+        discoveryEnabled,
+        vanityCode: vanityCode.trim().toLowerCase().replace(/[^a-z0-9-_]/g, ''),
+        defaultNotificationMode,
         actorId: user.id,
       });
       const nextServer = { ...currentServer, ...(updated.server || updated) };
@@ -243,6 +258,16 @@ export default function ServerSettingsModal({ onClose }) {
                     <input value={serverIcon} onChange={(event) => setServerIcon(event.target.value)} placeholder="https://ornek.com/sunucu-ikonu.png" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition placeholder:text-[#72767D] focus:border-[#00A8FC]" />
                     <p className="mt-2 text-xs leading-5 text-[#949BA4]">Bir resim URL’si yapıştır. Boş bırakırsan sunucu adının baş harfleri kullanılır.</p>
                   </div>
+                  <div className="mt-5">
+                    <label className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]"><Image className="h-3.5 w-3.5" /> Sunucu afişi bağlantısı</label>
+                    <input value={serverBanner} onChange={(event) => setServerBanner(event.target.value)} placeholder="https://ornek.com/sunucu-banner.png" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition placeholder:text-[#72767D] focus:border-[#00A8FC]" />
+                  </div>
+                  <label className="mt-5 block"><span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Sunucu açıklaması</span><textarea rows="4" maxLength="500" value={description} onChange={(event) => setDescription(event.target.value)} className="w-full resize-none rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition focus:border-[#00A8FC]" /></label>
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <label><span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Özel davet kodu</span><input value={vanityCode} onChange={(event) => setVanityCode(event.target.value)} placeholder="toplulugum" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none focus:border-[#00A8FC]" /></label>
+                    <label><span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Varsayılan bildirim</span><select value={defaultNotificationMode} onChange={(event) => setDefaultNotificationMode(event.target.value)} className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none focus:border-[#00A8FC]"><option value="all">Tüm mesajlar</option><option value="mentions">Sadece etiketler</option><option value="nothing">Sessiz</option></select></label>
+                  </div>
+                  <label className="mt-5 flex items-center justify-between rounded-lg bg-[#1E1F22] px-3 py-3 text-sm text-[#DBDEE1]"><span><strong className="block">Sunucu keşfinde göster</strong><small className="text-[#949BA4]">Herkes arama ekranında bu sunucuyu bulabilir.</small></span><input type="checkbox" checked={discoveryEnabled} onChange={(event) => setDiscoveryEnabled(event.target.checked)} /></label>
                 </div>
 
                 <div className="mt-7 rounded-lg border border-black/25 bg-[#2B2D31] p-5">

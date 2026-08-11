@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getColorForString } from '../../utils/colors';
+import { banMember } from '../../services/platformApi';
 import {
   assignMemberRoles,
   getMemberRoleIds,
@@ -78,6 +79,7 @@ export default function MemberManagementModal({
 
   const canManageRoles = isOwner || permissions.MANAGE_ROLES;
   const canKick = isOwner || permissions.KICK_MEMBERS;
+  const canBan = isOwner || permissions.BAN_MEMBERS || permissions.ADMINISTRATOR;
   const canMute = isOwner || permissions.MUTE_MEMBERS || permissions.ADMINISTRATOR;
   const canDeafen = isOwner || permissions.DEAFEN_MEMBERS || permissions.ADMINISTRATOR;
   const canTimeout = isOwner || permissions.MODERATE_MEMBERS || permissions.ADMINISTRATOR;
@@ -115,6 +117,7 @@ export default function MemberManagementModal({
     const name = memberName(member);
     const labels = {
       kick: 'sunucudan atmak',
+      ban: 'sunucudan yasaklamak',
       mute: 'susturmak',
       unmute: 'susturmayı kaldırmak',
       deafen: 'sağırlaştırmak',
@@ -136,11 +139,18 @@ export default function MemberManagementModal({
     }
 
     if (action === 'kick' && !window.confirm(`${name} kullanıcısını sunucudan atmak istediğine emin misin?`)) return;
+    if (action === 'ban') {
+      if (!window.confirm(`${name} kullanıcısını sunucudan kalıcı olarak yasaklamak istediğine emin misin?`)) return;
+      const reason = window.prompt('Yasaklama nedeni (isteğe bağlı):', '') || '';
+      options = { reason };
+    }
 
     setIsLoading(true);
     try {
-      const response = await moderateMember(serverId, id, action, actorId, '', options);
-      if (action === 'kick') {
+      const response = action === 'ban'
+        ? await banMember(serverId, id, options)
+        : await moderateMember(serverId, id, action, actorId, '', options);
+      if (action === 'kick' || action === 'ban') {
         commitMembers(members.filter((candidate) => (candidate.id || candidate.userId || candidate.user?.id) !== id));
       } else if (response.member) {
         commitMembers(updateMemberInList(members, response.member));
@@ -167,7 +177,7 @@ export default function MemberManagementModal({
 
   const canActOnMember = (member) => {
     const id = member.id || member.userId || member.user?.id;
-    return id !== actorId && !member.isOwner && (canKick || canMute || canDeafen || canTimeout);
+    return id !== actorId && !member.isOwner && (canKick || canBan || canMute || canDeafen || canTimeout);
   };
 
   const content = (
@@ -317,6 +327,11 @@ export default function MemberManagementModal({
                           {canKick && (
                             <button type="button" onClick={() => handleModeration(member, 'kick')} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[#F23F42] hover:bg-[#F23F42]/10">
                               <UserMinus className="h-3.5 w-3.5" /> Sunucudan at
+                            </button>
+                          )}
+                          {canBan && (
+                            <button type="button" onClick={() => handleModeration(member, 'ban')} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs font-semibold text-[#F23F42] hover:bg-[#F23F42]/10">
+                              <ShieldAlert className="h-3.5 w-3.5" /> Sunucudan yasakla
                             </button>
                           )}
                         </div>

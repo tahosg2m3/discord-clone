@@ -1,20 +1,104 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --app-background: #0f172a;
+  --app-foreground: #e2e8f0;
+  --scroll-thumb: #334155;
+  --scroll-thumb-hover: #475569;
+}
+
+html[data-theme='midnight'] {
+  --app-background: #050914;
+  --app-foreground: #e5e7eb;
+  --scroll-thumb: #1e293b;
+  --scroll-thumb-hover: #334155;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --app-background: #e8edf5;
+  --app-foreground: #172033;
+  --scroll-thumb: #a8b3c7;
+  --scroll-thumb-hover: #8593aa;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
 
 body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 
-               'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 
-               'Helvetica Neue', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
+    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--app-background);
+  color: var(--app-foreground);
 }
 
-/* Custom scrollbar */
+html[data-theme='midnight'] [class*="bg-[#0f172a]"],
+html[data-theme='midnight'] [class*="bg-[#111827]"],
+html[data-theme='midnight'] [class*="bg-[#1E1F22]"] {
+  background-color: #070b16 !important;
+}
+
+html[data-theme='midnight'] [class*="bg-[#151d2c]"],
+html[data-theme='midnight'] [class*="bg-[#1e293b]"],
+html[data-theme='midnight'] [class*="bg-[#2B2D31]"],
+html[data-theme='midnight'] [class*="bg-[#313338]"] {
+  background-color: #0c1220 !important;
+}
+
+html[data-theme='light'] [class*="bg-[#0f172a]"],
+html[data-theme='light'] [class*="bg-[#111827]"],
+html[data-theme='light'] [class*="bg-[#1E1F22]"] {
+  background-color: #f1f5f9 !important;
+}
+
+html[data-theme='light'] [class*="bg-[#151d2c]"],
+html[data-theme='light'] [class*="bg-[#1e293b]"],
+html[data-theme='light'] [class*="bg-[#2B2D31]"],
+html[data-theme='light'] [class*="bg-[#313338]"] {
+  background-color: #ffffff !important;
+}
+
+html[data-theme='light'] [class*="bg-[#1d2635]"],
+html[data-theme='light'] [class*="bg-[#202938]"],
+html[data-theme='light'] [class*="bg-[#232f43]"],
+html[data-theme='light'] [class*="bg-[#334155]"] {
+  background-color: #e2e8f0 !important;
+}
+
+html[data-theme='light'] [class*="text-[#F2F3F5]"],
+html[data-theme='light'] [class*="text-[#DBDEE1]"],
+html[data-theme='light'] [class*="text-[#e2e8f0]"],
+html[data-theme='light'] [class*="text-[#cbd5e1]"],
+html[data-theme='light'] [class*="text-white"] {
+  color: #172033 !important;
+}
+
+html[data-theme='light'] [class*="text-[#949BA4]"],
+html[data-theme='light'] [class*="text-[#94a3b8]"],
+html[data-theme='light'] [class*="text-[#B5BAC1]"],
+html[data-theme='light'] [class*="text-[#64748b]"] {
+  color: #59677d !important;
+}
+
+html[data-theme='light'] [class*="border-[#1E1F22]"] {
+  border-color: #d6deea !important;
+}
+
+html[data-theme='light'] img,
+html[data-theme='light'] video {
+  color: initial;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -25,10 +109,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--scroll-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--scroll-thumb-hover);
 }

@@ -105,3 +105,20 @@ export const removeFriend = (userId, friendId) => request(`/friends/${userId}/${
 export const fetchDMConversations = (userId) => request(`/dm/${userId}`);
 export const fetchDMMessages = (conversationId) => request(`/dm/messages/${conversationId}`);
 export const createDMConversation = (userId1, userId2) => request('/dm/create', { method: 'POST', body: JSON.stringify({ userId1, userId2 }) });
+export const createGroupDM = ({ name, icon = null, memberIds }) => request('/dm/groups', {
+  method: 'POST',
+  body: JSON.stringify({ name, icon, memberIds }),
+});
+export const fetchGroupDM = (conversationId) => request(`/dm/groups/${conversationId}`);
+export const updateGroupDM = (conversationId, updates) => request(`/dm/groups/${conversationId}`, {
+  method: 'PATCH',
+  body: JSON.stringify(updates),
+});
+export const addGroupDMMember = (conversationId, userId) => request(`/dm/groups/${conversationId}/members`, {
+  method: 'POST',
+  body: JSON.stringify({ userId }),
+});
+export const removeGroupDMMember = (conversationId, userId) => request(`/dm/groups/${conversationId}/members/${userId}`, {
+  method: 'DELETE',
+});
+export const leaveGroupDM = (conversationId) => request(`/dm/groups/${conversationId}/leave`, { method: 'POST' });

@@ -1,250 +1,124 @@
-﻿⚖️ Legal Disclaimer
-THIS PROJECT IS FOR EDUCATIONAL AND PORTFOLIO PURPOSES ONLY.
+# Discord Clone
 
-* **Educational Purpose Only:** This project is developed strictly for **educational and portfolio purposes**. It is intended to showcase coding skills and is not a commercial product.
-
-**No Warranty:** This software and all associated files are provided "AS IS" without any warranty or guarantee of any kind, express or implied. The developers do not guarantee that the software will be error-free or uninterrupted.
-
-**Limitation of Liability:** In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use of the software. You use this software entirely at your own risk.
-
-**Intellectual Property:** "Discord" is a trademark of Discord Inc. This project is a non-commercial clone and is not affiliated with, endorsed by, or sponsored by Discord Inc. All visual assets, branding, and logos inspired by Discord belong to their respective owners.
-
-**No Support:** Downloading or forking this repository does not include any obligation for the developers to provide support, updates, or maintenance.
-
-BY USING OR DOWNLOADING THIS SOFTWARE, YOU AGREE TO THESE TERMS. IF YOU DO NOT AGREE, DO NOT USE THIS SOFTWARE.
-
-
-# Discord Clone - Full Stack Chat Application
 <p align="right">
-🌍 Language:
-<a href="README.md">English</a> |
-<a href="README.tr.md">Türkçe</a>
+  Language: <a href="README.md">English</a> · <a href="README.tr.md">Türkçe</a>
 </p>
 
-## Features
+A full-stack, real-time community chat application inspired by Discord. It includes secure email verification, persistent servers and conversations, granular roles, moderation, voice/video communication, community tools, and an Electron desktop client.
 
-✅ Real-time messaging (Socket.io)
-✅ Voice channels with WebRTC
-✅ Screen sharing
-✅ GIF support (Tenor API)
-✅ User authentication (JWT)
-✅ Multiple servers & channels
-✅ Desktop app (Electron - Windows/Mac/Linux)
-✅ Web app
-✅ Typing indicators
-✅ Online user list
+> This independent educational project is not affiliated with, endorsed by, or sponsored by Discord Inc. Discord is a trademark of Discord Inc.
 
-## Tech Stack
+## Highlights
 
-**Frontend:** React, Vite, Tailwind CSS, Socket.io-client, PeerJS
-**Backend:** Node.js, Express, Socket.io, JWT, bcrypt
-**Desktop:** Electron
-**Database:** In-memory (MongoDB ready)
+- Email-code verification during registration and sign-in, password recovery, email change confirmation, JWT sessions, and bcrypt password hashing
+- Real-time server channels, direct messages, group DMs, typing indicators, presence, replies, reactions, pins, search, attachments, GIFs, voice messages, edit history, drafts, and unread state
+- Voice channels with microphone/deafen controls, cameras, screen sharing, push-to-talk, input/output settings, speaking indicators, reconnect handling, stage channels, and a soundboard
+- Server ownership, ordered roles, granular permissions, channel permission overrides, member nicknames, server profiles, kicks, bans, timeouts, mute/deafen/disconnect controls, and audit logs
+- Categories, text/voice/stage/announcement/forum channels, threads, tags, polls, slow mode, NSFW gates, temporary voice channels, and a recoverable channel trash system
+- Invite links, member screening, onboarding questions, server discovery, server templates, scheduled events and RSVP support
+- AutoMod for spam, blocked words, links, invite links, excessive caps and mentions; user/message reports and block lists
+- Webhooks, custom slash commands with persistent bot responses, custom emojis/stickers, announcement following, notification preferences, statistics, exports, and backups
+- SQLite persistence with first-run JSON migration and Electron-safe application data storage
+- Light, dark, and midnight themes; profile bio/banner/status/presence preferences
+- Web client plus Electron packages for Windows, macOS, and Linux
 
----
+## Technology
 
-## 🚀 Development Setup
+- Frontend: React 18, Vite 8, Tailwind CSS, Socket.IO Client, PeerJS
+- Backend: Node.js, Express, Socket.IO, PeerJS Server, JWT, bcrypt, Nodemailer
+- Storage: SQLite through `better-sqlite3`
+- Desktop: Electron
 
-### 1. Clone Repository
+## Requirements
+
+- Node.js 20.19 or newer (Node.js 22 LTS is recommended)
+- npm
+- An SMTP account for the mandatory email verification flow
+- A browser or operating system that grants microphone/camera permissions for voice features
+
+## Development setup
+
 ```bash
 git clone https://github.com/tahosg2m3/discord-clone.git
 cd discord-clone
-```
-
-### 2. Install Dependencies
-```bash
 npm install
 ```
 
-### 3. Setup Environment Variables
+Copy `backend/.env.example` to `backend/.env` and fill in your own secrets:
 
-**backend/.env**
-```
+```env
 PORT=3001
 CLIENT_URL=http://localhost:5173
-JWT_SECRET=your-super-secret-jwt-key-change-this
 NODE_ENV=development
+JWT_SECRET=replace-with-a-long-random-secret
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your-email@example.com
+SMTP_PASS=your-app-password
+MAIL_FROM="Discord Clone <your-email@example.com>"
 ```
 
-### 4. Run Development Servers
+For Gmail, use an App Password instead of the normal account password. Never commit `backend/.env`, `runtime.env`, databases, uploads, or generated secrets.
 
-**Option A: All at once**
+Start the complete development stack:
+
 ```bash
 npm run dev
 ```
 
-**Option B: Separate terminals**
+The frontend runs at `http://localhost:5173`, the API/Socket.IO server at `http://localhost:3001`, and the bundled PeerJS signaling server at port `9000` by default.
+
+To run components separately:
+
 ```bash
-# Terminal 1 - Backend
-cd backend
-npm run dev
-
-# Terminal 2 - Frontend
-cd frontend
-npm run dev
-
-# Terminal 3 - Electron (after frontend starts)
+npm run dev:backend
+npm run dev:frontend
 npm run dev:electron
 ```
 
-### 5. Access Application
+## Optional frontend environment
 
-- **Web:** http://localhost:5173
-- **Desktop:** Electron window will open automatically
+Create `frontend/.env.local` when the services are not running on localhost:
 
----
+```env
+VITE_API_URL=https://example.com/api
+VITE_API_ORIGIN=https://example.com
+VITE_SOCKET_URL=https://example.com
+VITE_PEER_HOST=peer.example.com
+VITE_PEER_PORT=443
+VITE_PEER_PATH=/peerjs
+VITE_PEER_SECURE=true
+VITE_TENOR_API_KEY=your-tenor-api-key
+```
 
-## 📦 Build for Production
+## Build
 
-### Web App
 ```bash
-cd frontend
+# Web production bundle
+npm run build:frontend
+
+# Electron installer/package for the current operating system
+npm run build:electron
+
+# Both
 npm run build
 ```
 
-### Desktop App
+Generated Electron artifacts are placed under `release/`.
 
-**Windows:**
-```bash
-npm run build
-# Output: release/Discord Clone Setup.exe
-```
+For a packaged desktop installation, copy the generated `runtime.env.example` in the application's data directory to `runtime.env` and enter the real SMTP credentials. The application keeps SQLite data, uploads, and its generated JWT secret in the operating system's application-data directory.
 
-**macOS:**
-```bash
-npm run build
-# Output: release/Discord Clone.dmg
-```
+## Security
 
-**Linux:**
-```bash
-npm run build
-# Output: release/Discord Clone.AppImage
-```
+- Dependency manifests are kept free of known npm audit findings at the time of release.
+- REST and Socket.IO actions derive the actor from a verified JWT; client-supplied user identities are not trusted.
+- Server, channel, messaging, voice, moderation, upload, and management operations enforce membership and permissions on the backend.
+- Secrets and local user data are excluded through `.gitignore`.
 
----
+For an internet-facing deployment, additionally use HTTPS/WSS, a reverse proxy, strict production CORS origins, rate limiting, monitoring, backups, and properly managed secrets. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
-## 🎮 Usage
+## License and disclaimer
 
-### 1. Register Account
-- Open app
-- Click "Sign Up"
-- Enter username, email, password
-- Click "Create Account"
-
-### 2. Join Server
-- Default server appears on left
-- Click server icon
-- Select a channel
-
-### 3. Text Chat
-- Type message in input box
-- Press Enter to send
-- Click GIF button to send GIFs
-
-### 4. Voice Chat
-- Click a voice channel
-- Click microphone button to join
-- Controls: Mute, Deafen, Screen Share, Leave
-
-### 5. Create Server
-- Click "+" button on left sidebar
-- Enter server name
-- New server appears
-
----
-
-## 🔧 Configuration
-
-### Backend Port
-Change in `backend/.env`:
-```
-PORT=3001
-```
-
-### Frontend Port
-Change in `frontend/vite.config.js`:
-```javascript
-export default defineConfig({
-  server: {
-    port: 5173,
-  },
-})
-```
-
-### PeerJS Server
-For voice/video, run PeerJS server:
-```bash
-npm install -g peer
-peerjs --port 9000
-```
-
-Or use public PeerJS cloud server in `VoiceContext.jsx`:
-```javascript
-const newPeer = new Peer(user.id, {
-  host: '0.peerjs.com',
-  port: 443,
-  secure: true,
-});
-```
-
----
-
-## 🐛 Troubleshooting
-
-### "Cannot find module 'bcrypt'"
-```bash
-cd backend
-npm install bcrypt jsonwebtoken
-```
-
-### Voice not working
-1. Check PeerJS server is running
-2. Check microphone permissions
-3. Check browser console for errors
-
-### Electron app not starting
-```bash
-npm install electron electron-builder --save-dev
-```
-
-### Port already in use
-```bash
-# Kill process on port 3001
-lsof -ti:3001 | xargs kill -9
-
-# Kill process on port 5173
-lsof -ti:5173 | xargs kill -9
-```
-
----
-
-## 📱 Platform Support
-
-| Platform | Status | Format |
-|----------|--------|--------|
-| Windows | ✅ | .exe installer |
-| macOS | ✅ | .dmg |
-| Linux | ✅ | .AppImage, .deb |
-| Web | ✅ | Browser |
-
----
-
-## 🔐 Security Notes
-
-⚠️ **IMPORTANT:** This is a development setup. For production:
-
-1. Change `JWT_SECRET` in `.env`
-2. Use HTTPS
-3. Add rate limiting
-4. Use proper database (MongoDB)
-5. Validate all inputs
-6. Use environment variables
-7. Enable CORS only for your domain
-8. Hash passwords properly (already done with bcrypt)
-
----
-
-## 📄 License
-
-MIT License - Feel free to use for learning and personal projects
+This repository is provided as-is for educational and portfolio use. No warranty or support obligation is provided. Review the repository license and third-party licenses before redistribution or commercial use.

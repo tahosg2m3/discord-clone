@@ -1,108 +1,71 @@
-﻿import { useState } from 'react';
-import { X, Upload } from 'lucide-react';
-import { createServer } from '../../services/api'; // API import edildi
-import { useAuth } from '../../context/AuthContext';
-import { useServer } from '../../context/ServerContext'; // Context import edildi
+import { useEffect, useState } from 'react';
+import { Plus, Sparkles, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { createServer } from '../../services/api';
+import { applyServerTemplate, listPublicTemplates } from '../../services/platformApi';
+import { useAuth } from '../../context/AuthContext';
+import { useServer } from '../../context/ServerContext';
 
-export default function CreateServerModal({ onClose }) {
+export default function CreateServerModal({ onClose, onCreated }) {
   const [serverName, setServerName] = useState('');
+  const [templates, setTemplates] = useState([]);
+  const [templateId, setTemplateId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
-  const { setServers, setCurrentServer } = useServer(); // Context'ten setter'ları al
+  const { setServers, setCurrentServer, setCurrentChannel } = useServer();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!serverName.trim()) return;
+  useEffect(() => {
+    listPublicTemplates()
+      .then(payload => setTemplates(Array.isArray(payload) ? payload : payload.templates || []))
+      .catch(() => setTemplates([]));
+  }, []);
 
+  const handleSubmit = async event => {
+    event.preventDefault();
+    const name = serverName.trim() || `${user?.username || 'Yeni'} sunucusu`;
     setIsLoading(true);
     try {
-      // 1. API isteğini direkt burada yapıyoruz
-      const newServer = await createServer(serverName.trim(), user.id);
-      
-      // 2. Sunucu listesini güncelle
-      setServers(prev => [...prev, newServer]);
-      
-      // 3. Yeni sunucuya geçiş yap
+      const response = templateId
+        ? await applyServerTemplate(templateId, name)
+        : await createServer(name, user.id);
+      const newServer = response.server || response;
+      setServers(previous => previous.some(item => item.id === newServer.id) ? previous : [...previous, newServer]);
+      setCurrentChannel(null);
       setCurrentServer(newServer);
-      
-      toast.success(`Server "${newServer.name}" created!`);
+      onCreated?.(newServer);
+      toast.success(templateId ? 'Sunucu şablondan oluşturuldu.' : 'Sunucu oluşturuldu.');
       onClose();
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to create server');
+      toast.error(error.message || 'Sunucu oluşturulamadı.');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-      <div className="bg-gray-800 rounded-lg w-full max-w-md overflow-hidden shadow-2xl relative">
-        
-        {/* Kapatma Butonu */}
-        <button 
-            onClick={onClose}
-            className="absolute top-4 right-4 text-gray-400 hover:text-gray-200"
-        >
-            <X className="w-6 h-6" />
-        </button>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <section className="w-full max-w-lg overflow-hidden rounded-3xl border border-white/[0.08] bg-[#151d2c] shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+        <header className="relative border-b border-white/[0.07] bg-gradient-to-br from-[#1d4ed8]/25 to-[#7c3aed]/20 px-7 py-6">
+          <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-xl p-2 text-[#94a3b8] hover:bg-white/[0.07] hover:text-white"><X className="h-5 w-5" /></button>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#5865F2] text-white shadow-lg shadow-blue-500/20"><Users className="h-6 w-6" /></div>
+          <h2 className="mt-4 text-2xl font-bold text-white">Kendi topluluğunu oluştur</h2>
+          <p className="mt-1 max-w-md text-sm leading-5 text-[#94a3b8]">Boş bir sunucuyla başla veya paylaşılan bir rol ve kanal şablonunu kullan.</p>
+        </header>
 
-        {/* Header */}
-        <div className="p-6 text-center">
-          <h2 className="text-2xl font-bold text-white mb-2">Customize Your Server</h2>
-          <p className="text-gray-400 text-sm">
-            Give your new server a personality with a name and an icon. You can always change it later.
-          </p>
-        </div>
+        <form onSubmit={handleSubmit} className="space-y-5 p-7">
+          <label className="block text-xs font-bold uppercase tracking-wide text-[#94a3b8]">Sunucu adı<input autoFocus maxLength="100" value={serverName} onChange={event => setServerName(event.target.value)} placeholder={`${user?.username || 'Yeni'} sunucusu`} className="mt-2 w-full rounded-xl border border-white/[0.08] bg-[#0f172a] px-4 py-3 text-sm text-white outline-none placeholder:text-[#64748b] focus:border-[#3b82f6]" /></label>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="px-6 pb-6">
-          {/* Icon Upload Placeholder */}
-          <div className="flex justify-center mb-6">
-            <div className="w-24 h-24 border-2 border-dashed border-gray-600 rounded-full flex flex-col items-center justify-center text-gray-400 hover:border-gray-400 hover:bg-gray-700/50 transition-colors cursor-pointer">
-              <Upload className="w-8 h-8 mb-1" />
-              <span className="text-xs font-bold uppercase">Upload</span>
+          <div>
+            <div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wide text-[#94a3b8]">Başlangıç düzeni</span><Sparkles className="h-4 w-4 text-[#a78bfa]" /></div>
+            <div className="grid max-h-52 gap-2 overflow-y-auto pr-1 custom-scrollbar sm:grid-cols-2">
+              <button type="button" onClick={() => setTemplateId('')} className={`rounded-xl border p-3 text-left transition ${!templateId ? 'border-[#3b82f6] bg-[#2563eb]/15' : 'border-white/[0.08] bg-[#0f172a] hover:border-white/[0.16]'}`}><div className="flex items-center gap-2"><Plus className="h-4 w-4 text-[#60a5fa]" /><strong className="text-sm text-white">Boş sunucu</strong></div><p className="mt-1 text-[11px] text-[#64748b]">Genel kanalıyla temiz başlangıç</p></button>
+              {templates.map(template => <button key={template.id} type="button" onClick={() => setTemplateId(template.id)} className={`rounded-xl border p-3 text-left transition ${templateId === template.id ? 'border-[#8b5cf6] bg-[#7c3aed]/15' : 'border-white/[0.08] bg-[#0f172a] hover:border-white/[0.16]'}`}><div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-[#a78bfa]" /><strong className="truncate text-sm text-white">{template.name}</strong></div><p className="mt-1 line-clamp-2 text-[11px] text-[#64748b]">{template.description || `${template.channels?.length || 0} kanal · ${template.roles?.length || 0} rol`}</p></button>)}
             </div>
           </div>
 
-          {/* Server Name Input */}
-          <div className="mb-6">
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-              Server Name
-            </label>
-            <input
-              type="text"
-              value={serverName}
-              onChange={(e) => setServerName(e.target.value)}
-              placeholder={`${user?.username}'s server`}
-              className="w-full bg-gray-900 text-white p-3 rounded border border-gray-700 focus:border-blue-500 focus:outline-none transition-colors"
-              autoFocus
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              By creating a server, you agree to Discord's Community Guidelines.
-            </p>
-          </div>
-
-          {/* Footer Buttons */}
-          <div className="flex justify-between items-center bg-gray-700/30 -mx-6 -mb-6 p-4 mt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-gray-300 hover:underline text-sm px-4"
-            >
-              Back
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading || !serverName}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-lg shadow-blue-900/20"
-            >
-              {isLoading ? 'Creating...' : 'Create'}
-            </button>
-          </div>
+          <div className="flex items-center justify-end gap-2 border-t border-white/[0.07] pt-5"><button type="button" onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-[#94a3b8] hover:bg-white/[0.06] hover:text-white">Vazgeç</button><button type="submit" disabled={isLoading} className="rounded-xl bg-[#5865F2] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/15 hover:bg-[#4752C4] disabled:opacity-50">{isLoading ? 'Oluşturuluyor…' : 'Sunucuyu oluştur'}</button></div>
         </form>
-      </div>
+      </section>
     </div>
   );
 }

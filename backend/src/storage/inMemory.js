@@ -15,6 +15,7 @@ const DATABASE_FILE = path.join(
 
 const PERMISSIONS = Object.freeze([
   'ADMINISTRATOR',
+  'CREATE_INSTANT_INVITE',
   'VIEW_CHANNEL',
   'SEND_MESSAGES',
   'MANAGE_MESSAGES',
@@ -22,7 +23,15 @@ const PERMISSIONS = Object.freeze([
   'MANAGE_ROLES',
   'MANAGE_CHANNELS',
   'KICK_MEMBERS',
+  'BAN_MEMBERS',
   'MODERATE_MEMBERS',
+  'VIEW_AUDIT_LOG',
+  'MANAGE_EVENTS',
+  'MANAGE_WEBHOOKS',
+  'MANAGE_EMOJIS_AND_STICKERS',
+  'MENTION_EVERYONE',
+  'CREATE_PUBLIC_THREADS',
+  'SEND_MESSAGES_IN_THREADS',
   'CONNECT',
   'SPEAK',
   'STREAM',
@@ -32,6 +41,7 @@ const PERMISSIONS = Object.freeze([
 ]);
 
 const DEFAULT_MEMBER_PERMISSIONS = Object.freeze([
+  'CREATE_INSTANT_INVITE',
   'VIEW_CHANNEL',
   'SEND_MESSAGES',
   'CONNECT',
@@ -40,6 +50,75 @@ const DEFAULT_MEMBER_PERMISSIONS = Object.freeze([
 ]);
 
 const ALL_PERMISSIONS = Object.freeze([...PERMISSIONS]);
+const PRESENCE_STATUSES = Object.freeze(['online', 'idle', 'dnd', 'invisible']);
+const SUPPORTED_LOCALES = Object.freeze(['tr', 'en']);
+const SUPPORTED_THEMES = Object.freeze(['dark', 'midnight', 'light']);
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function sanitizeText(value, { field, maxLength, nullable = false } = {}) {
+  if (value === null && nullable) return null;
+  if (typeof value !== 'string') throw new Error(`${field || 'Alan'} metin olmalıdır.`);
+
+  // NUL ve diğer kontrol karakterleri JSON, log ve istemci işleme akışlarında
+  // beklenmeyen davranışlara yol açabilir. Satır sonu ve sekmeye izin verilir.
+  const clean = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
+  if (clean.length > maxLength) throw new Error(`${field || 'Alan'} en fazla ${maxLength} karakter olabilir.`);
+  return clean || (nullable ? null : '');
+}
+
+function sanitizeMediaUrl(value, field) {
+  if (value === undefined) return undefined;
+  const clean = sanitizeText(value, { field, maxLength: 2048, nullable: true });
+  if (!clean) return null;
+  if (/[\r\n\t]/.test(clean)) throw new Error(`${field} geçerli bir adres olmalıdır.`);
+
+  // Yerel yüklemeler sadece uygulamanın uploads dizininden, uzaktaki görseller ise
+  // yalnızca HTTP(S) üzerinden gelebilir. javascript:/file:/data: gibi şemalar reddedilir.
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(clean)) return clean;
+  try {
+    const parsed = new URL(clean);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+  } catch (_) {
+    // Aşağıdaki ortak doğrulama hatası döndürülür.
+  }
+  throw new Error(`${field} geçerli bir HTTP(S) veya yükleme adresi olmalıdır.`);
+}
+
+function normalizeStoredUserProfile(user) {
+  let changed = false;
+  const defaults = {
+    banner: null,
+    bio: '',
+    customStatus: '',
+    presenceStatus: 'online',
+    locale: 'tr',
+    theme: 'dark',
+    emailVerified: Boolean(user.email),
+  };
+
+  Object.entries(defaults).forEach(([key, fallback]) => {
+    if (user[key] === undefined) {
+      user[key] = fallback;
+      changed = true;
+    }
+  });
+  if (!PRESENCE_STATUSES.includes(user.presenceStatus)) {
+    user.presenceStatus = 'online';
+    changed = true;
+  }
+  if (!SUPPORTED_LOCALES.includes(user.locale)) {
+    user.locale = 'tr';
+    changed = true;
+  }
+  if (!SUPPORTED_THEMES.includes(user.theme)) {
+    user.theme = 'dark';
+    changed = true;
+  }
+  return changed;
+}
 
 function parsePersistedMap(value) {
   if (!value) return new Map();
@@ -67,6 +146,9 @@ function createDefaultRole(serverId) {
     serverId,
     name: '@everyone',
     color: null,
+    icon: null,
+    hoist: false,
+    mentionable: false,
     permissions: [...DEFAULT_MEMBER_PERMISSIONS],
     position: 0,
     isDefault: true,
@@ -83,6 +165,8 @@ function copyRole(role) {
 function publicUser(user) {
   if (!user) return null;
   const { password, email, tokenVersion, ...safeUser } = user;
+  // Görünmezlik tercihi başka kullanıcılara sızdırılmaz.
+  if (safeUser.presenceStatus === 'invisible') safeUser.presenceStatus = 'offline';
   return safeUser;
 }
 
@@ -99,6 +183,18 @@ class InMemoryStorage {
     this.serverRoles = new Map();
     this.serverMemberRoles = new Map();
     this.serverModeration = new Map();
+    this.serverMemberProfiles = new Map();
+    this.userBlocks = new Map();
+    // Discord benzeri platform özellikleri kendi sürümlü alanında tutulur.
+    // Düz obje kullanmak eski JSON/SQLite snapshot biçimiyle geriye uyumludur;
+    // ayrıntılı normalizasyonu platformService üstlenir.
+    this.platformState = {
+      version: 1,
+      servers: {},
+      notificationPreferences: {},
+      templates: [],
+      backups: [],
+    };
     this.saveTimeout = null;
     this.stateStore = new SQLiteStateStore({
       databasePath: DATABASE_FILE,
@@ -127,8 +223,22 @@ class InMemoryStorage {
       this.serverRoles = parsePersistedMap(data.serverRoles);
       this.serverMemberRoles = parsePersistedMap(data.serverMemberRoles);
       this.serverModeration = parsePersistedMap(data.serverModeration);
+      this.serverMemberProfiles = parsePersistedMap(data.serverMemberProfiles);
+      this.userBlocks = parsePersistedMap(data.userBlocks);
+      this.platformState = data.platformState && typeof data.platformState === 'object' && !Array.isArray(data.platformState)
+        ? data.platformState
+        : {
+          version: 1,
+          servers: {},
+          notificationPreferences: {},
+          templates: [],
+          backups: [],
+        };
 
-      if (this.migrateRoleData()) this.saveData();
+      const userProfilesChanged = this.users.reduce((changed, user) => (
+        normalizeStoredUserProfile(user) || changed
+      ), false);
+      if (this.migrateRoleData() || this.migrateSocialData() || userProfilesChanged) this.saveData();
     } catch (error) {
       console.error('Veri dosyası okunamadı; yeni veri yapısı oluşturuluyor:', error.message);
       this.seedData();
@@ -184,6 +294,9 @@ class InMemoryStorage {
       serverRoles: JSON.stringify(Array.from(this.serverRoles.entries())),
       serverMemberRoles: JSON.stringify(Array.from(this.serverMemberRoles.entries())),
       serverModeration: JSON.stringify(Array.from(this.serverModeration.entries())),
+      serverMemberProfiles: JSON.stringify(Array.from(this.serverMemberProfiles.entries())),
+      userBlocks: JSON.stringify(Array.from(this.userBlocks.entries())),
+      platformState: this.platformState,
     };
   }
 
@@ -232,6 +345,61 @@ class InMemoryStorage {
     return changed;
   }
 
+  migrateSocialData() {
+    let changed = false;
+    const validUserIds = new Set(this.users.map(user => user.id));
+
+    for (const [serverId, rawProfiles] of this.serverMemberProfiles.entries()) {
+      const memberIds = new Set(this.serverMembers.get(serverId) || []);
+      const profiles = rawProfiles && typeof rawProfiles === 'object' && !Array.isArray(rawProfiles)
+        ? rawProfiles
+        : {};
+      const cleaned = {};
+      Object.entries(profiles).forEach(([userId, profile]) => {
+        if (!memberIds.has(userId) || !profile || typeof profile !== 'object') {
+          changed = true;
+          return;
+        }
+        const nickname = typeof profile.nickname === 'string' ? profile.nickname.trim().slice(0, 32) : '';
+        let serverAvatar = null;
+        try {
+          serverAvatar = sanitizeMediaUrl(profile.serverAvatar, 'Sunucu avatarı') || null;
+        } catch (_) {
+          changed = true;
+        }
+        if (nickname || serverAvatar) cleaned[userId] = {
+          nickname: nickname || null,
+          serverAvatar,
+          updatedAt: Number(profile.updatedAt) || Date.now(),
+        };
+      });
+      if (JSON.stringify(profiles) !== JSON.stringify(cleaned)) changed = true;
+      this.serverMemberProfiles.set(serverId, cleaned);
+    }
+
+    for (const [userId, rawBlocks] of this.userBlocks.entries()) {
+      if (!validUserIds.has(userId)) {
+        this.userBlocks.delete(userId);
+        changed = true;
+        continue;
+      }
+      const seen = new Set();
+      const cleaned = (Array.isArray(rawBlocks) ? rawBlocks : []).flatMap(entry => {
+        const blockedUserId = typeof entry === 'string' ? entry : entry?.userId;
+        if (!validUserIds.has(blockedUserId) || blockedUserId === userId || seen.has(blockedUserId)) {
+          changed = true;
+          return [];
+        }
+        seen.add(blockedUserId);
+        return [{ userId: blockedUserId, createdAt: Number(entry?.createdAt) || Date.now() }];
+      });
+      if (JSON.stringify(rawBlocks) !== JSON.stringify(cleaned)) changed = true;
+      this.userBlocks.set(userId, cleaned);
+    }
+
+    return changed;
+  }
+
   ensureServerRoleData(serverId) {
     const server = this.getServerById(serverId);
     if (!server || server.isDM) return false;
@@ -253,6 +421,9 @@ class InMemoryStorage {
         serverId,
         name: isDefault ? '@everyone' : String(role.name || 'Yeni rol').trim().slice(0, 100) || 'Yeni rol',
         color: typeof role.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(role.color) ? role.color : null,
+        icon: isDefault ? null : (role.icon ? String(role.icon).slice(0, 1000) : null),
+        hoist: isDefault ? false : Boolean(role.hoist),
+        mentionable: isDefault ? false : Boolean(role.mentionable),
         permissions: isDefault
           ? sanitizePermissions(role.permissions?.length ? role.permissions : DEFAULT_MEMBER_PERMISSIONS)
           : sanitizePermissions(role.permissions),
@@ -355,7 +526,10 @@ class InMemoryStorage {
   getServerById(id) { return this.servers.find(server => server.id === id); }
   getServerByInviteCode(code) {
     const normalizedCode = String(code || '').trim().toUpperCase();
-    return this.servers.find(server => server.inviteCode?.toUpperCase() === normalizedCode);
+    return this.servers.find(server => (
+      server.inviteCode?.toUpperCase() === normalizedCode
+      || server.vanityCode?.toUpperCase() === normalizedCode
+    ));
   }
 
   createServer(name, creatorId) {
@@ -381,8 +555,26 @@ class InMemoryStorage {
     const server = this.getServerById(id);
     if (!server) return null;
 
+    let nextVanityCode;
+    if (updates.vanityCode !== undefined) {
+      nextVanityCode = String(updates.vanityCode || '').trim().toLowerCase();
+      const isValid = !nextVanityCode || /^[a-z0-9-]{3,32}$/.test(nextVanityCode);
+      const isTaken = nextVanityCode && this.servers.some(item => (
+        item.id !== id && String(item.vanityCode || '').toLowerCase() === nextVanityCode
+      ));
+      if (!isValid || isTaken) return null;
+    }
+
     if (updates.name) server.name = String(updates.name).trim();
     if (updates.icon !== undefined) server.icon = updates.icon;
+    if (updates.description !== undefined) server.description = String(updates.description || '').trim().slice(0, 1000);
+    if (updates.banner !== undefined) server.banner = updates.banner ? String(updates.banner).slice(0, 1000) : null;
+    if (updates.discoveryEnabled !== undefined) server.discoveryEnabled = Boolean(updates.discoveryEnabled);
+    if (updates.defaultNotificationMode !== undefined
+      && ['all', 'mentions', 'nothing'].includes(updates.defaultNotificationMode)) {
+      server.defaultNotificationMode = updates.defaultNotificationMode;
+    }
+    if (updates.vanityCode !== undefined) server.vanityCode = nextVanityCode || null;
     if (updates.inviteCode) server.inviteCode = String(updates.inviteCode).trim().toUpperCase();
     this.saveData();
     return server;
@@ -408,6 +600,10 @@ class InMemoryStorage {
     this.serverRoles.delete(id);
     this.serverMemberRoles.delete(id);
     this.serverModeration.delete(id);
+    this.serverMemberProfiles.delete(id);
+    if (this.platformState?.servers && typeof this.platformState.servers === 'object') {
+      delete this.platformState.servers[id];
+    }
     this.saveData();
     return true;
   }
@@ -447,8 +643,15 @@ class InMemoryStorage {
     const moderation = this.serverModeration.get(serverId) || {};
     delete assignments[userId];
     delete moderation[userId];
+    const profiles = this.serverMemberProfiles.get(serverId) || {};
+    delete profiles[userId];
     this.serverMemberRoles.set(serverId, assignments);
     this.serverModeration.set(serverId, moderation);
+    this.serverMemberProfiles.set(serverId, profiles);
+    const platformServer = this.platformState?.servers?.[serverId];
+    if (platformServer?.memberVerifications && typeof platformServer.memberVerifications === 'object') {
+      delete platformServer.memberVerifications[userId];
+    }
     this.saveData();
     return true;
   }
@@ -456,6 +659,49 @@ class InMemoryStorage {
   getServerMembers(serverId) {
     const memberIds = this.serverMembers.get(serverId) || [];
     return memberIds.map(id => publicUser(this.getUserById(id))).filter(Boolean);
+  }
+
+  getServerMemberProfile(serverId, userId) {
+    if (!this.isServerMember(serverId, userId)) return null;
+    const profile = (this.serverMemberProfiles.get(serverId) || {})[userId] || {};
+    return {
+      serverId,
+      userId,
+      nickname: profile.nickname || null,
+      serverAvatar: profile.serverAvatar || null,
+      updatedAt: profile.updatedAt || null,
+    };
+  }
+
+  updateServerMemberProfile(serverId, userId, updates = {}) {
+    if (!this.isServerMember(serverId, userId)) return null;
+    const profiles = this.serverMemberProfiles.get(serverId) || {};
+    const current = profiles[userId] || {};
+    const next = { ...current };
+
+    if (hasOwn(updates, 'nickname') && updates.nickname !== undefined) {
+      next.nickname = sanitizeText(updates.nickname, {
+        field: 'Sunucu takma adı',
+        maxLength: 32,
+        nullable: true,
+      });
+      if (next.nickname && /[\r\n\t]/.test(next.nickname)) {
+        throw new Error('Sunucu takma adı tek satır olmalıdır.');
+      }
+    }
+    if (hasOwn(updates, 'serverAvatar') && updates.serverAvatar !== undefined) {
+      next.serverAvatar = sanitizeMediaUrl(updates.serverAvatar, 'Sunucu avatarı');
+    }
+
+    if (next.nickname || next.serverAvatar) {
+      next.updatedAt = Date.now();
+      profiles[userId] = next;
+    } else {
+      delete profiles[userId];
+    }
+    this.serverMemberProfiles.set(serverId, profiles);
+    this.saveData();
+    return this.getServerMemberProfile(serverId, userId);
   }
 
   getServerRoles(serverId) {
@@ -467,7 +713,14 @@ class InMemoryStorage {
     return this.getServerRoles(serverId).find(role => role.id === roleId) || null;
   }
 
-  createServerRole(serverId, { name, color = null, permissions = [] }) {
+  createServerRole(serverId, {
+    name,
+    color = null,
+    icon = null,
+    hoist = false,
+    mentionable = false,
+    permissions = [],
+  }) {
     if (!this.getServerById(serverId) || !String(name || '').trim()) return null;
 
     this.ensureServerRoleData(serverId);
@@ -477,6 +730,9 @@ class InMemoryStorage {
       serverId,
       name: String(name).trim().slice(0, 100),
       color: typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : null,
+      icon: icon ? String(icon).slice(0, 1000) : null,
+      hoist: Boolean(hoist),
+      mentionable: Boolean(mentionable),
       permissions: sanitizePermissions(permissions),
       position: roles.length,
       isDefault: false,
@@ -516,6 +772,9 @@ class InMemoryStorage {
         ? updates.color
         : null;
     }
+    if (updates.icon !== undefined) role.icon = updates.icon ? String(updates.icon).slice(0, 1000) : null;
+    if (updates.hoist !== undefined) role.hoist = Boolean(updates.hoist);
+    if (updates.mentionable !== undefined) role.mentionable = Boolean(updates.mentionable);
     if (updates.permissions !== undefined) role.permissions = sanitizePermissions(updates.permissions);
     role.updatedAt = Date.now();
     this.saveData();
@@ -690,9 +949,14 @@ class InMemoryStorage {
     const moderation = this.getMemberModerationState(serverId, userId);
     const server = this.getServerById(serverId);
 
+    const serverProfile = this.getServerMemberProfile(serverId, userId);
+
     return {
       ...user,
       status: this.getUserStatus(userId),
+      serverProfile,
+      nickname: serverProfile?.nickname || null,
+      serverAvatar: serverProfile?.serverAvatar || null,
       roleIds,
       roles: roleIds.map(roleId => rolesById.get(roleId)).filter(Boolean),
       permissions: this.getMemberPermissions(serverId, userId),
@@ -718,8 +982,24 @@ class InMemoryStorage {
   deleteChannel(id) {
     const index = this.channels.findIndex(channel => channel.id === id);
     if (index === -1) return false;
+    const channel = this.channels[index];
     this.channels.splice(index, 1);
     this.channelMessages.delete(id);
+    const platformServer = this.platformState?.servers?.[channel.serverId];
+    if (platformServer && typeof platformServer === 'object') {
+      if (platformServer.channels && typeof platformServer.channels === 'object') delete platformServer.channels[id];
+      ['events', 'forumTags', 'forumPosts', 'threads', 'polls', 'webhooks'].forEach(key => {
+        if (Array.isArray(platformServer[key])) {
+          platformServer[key] = platformServer[key].filter(item => item.channelId !== id);
+        }
+      });
+      if (Array.isArray(platformServer.onboarding?.defaultChannelIds)) {
+        platformServer.onboarding.defaultChannelIds = platformServer.onboarding.defaultChannelIds.filter(channelId => channelId !== id);
+      }
+      if (Array.isArray(platformServer.settings?.autoMod?.exemptChannelIds)) {
+        platformServer.settings.autoMod.exemptChannelIds = platformServer.settings.autoMod.exemptChannelIds.filter(channelId => channelId !== id);
+      }
+    }
     this.saveData();
     return true;
   }
@@ -734,8 +1014,15 @@ class InMemoryStorage {
   updateChannelMessage(channelId, messageId, newContent) {
     const message = this.getChannelMessages(channelId).find(item => item.id === messageId);
     if (!message) return null;
+    if (message.content !== newContent) {
+      message.editHistory = Array.isArray(message.editHistory) ? message.editHistory : [];
+      message.editHistory.push({ content: message.content, editedAt: Date.now() });
+      // Mesaj geÃ§miÅŸi denetim iÃ§in tutulur fakat tek mesajÄ±n veriyi sÄ±nÄ±rsÄ±z bÃ¼yÃ¼tmesi engellenir.
+      if (message.editHistory.length > 25) message.editHistory = message.editHistory.slice(-25);
+    }
     message.content = newContent;
     message.isEdited = true;
+    message.editedAt = Date.now();
     this.saveData();
     return message;
   }
@@ -749,7 +1036,18 @@ class InMemoryStorage {
   }
 
   createUser(username) {
-    const user = { id: uuidv4(), username, createdAt: Date.now() };
+    const user = {
+      id: uuidv4(),
+      username,
+      banner: null,
+      bio: '',
+      customStatus: '',
+      presenceStatus: 'online',
+      locale: 'tr',
+      theme: 'dark',
+      emailVerified: false,
+      createdAt: Date.now(),
+    };
     this.users.push(user);
     this.userStatuses.set(user.id, 'offline');
     this.addServerMember('default-server', user.id);
@@ -768,6 +1066,13 @@ class InMemoryStorage {
       email,
       password,
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=random`,
+      banner: null,
+      bio: '',
+      customStatus: '',
+      presenceStatus: 'online',
+      locale: 'tr',
+      theme: 'dark',
+      emailVerified: true,
       status: 'offline',
       createdAt: Date.now(),
       tokenVersion: 0,
@@ -823,21 +1128,96 @@ class InMemoryStorage {
   updateUserProfile(userId, updates) {
     const user = this.getUserById(userId);
     if (!user) return null;
+    const next = {};
 
-    if (updates.username) {
-      const nextUsername = String(updates.username).trim();
+    if (hasOwn(updates, 'username') && updates.username !== undefined) {
+      const nextUsername = sanitizeText(updates.username, { field: 'Kullanıcı adı', maxLength: 50 });
+      if (nextUsername.length < 2) throw new Error('Kullanıcı adı en az 2 karakter olmalıdır.');
+      if (/[\r\n\t]/.test(nextUsername)) throw new Error('Kullanıcı adı tek satır olmalıdır.');
       const existing = this.getUserByUsername(nextUsername);
       if (existing && existing.id !== userId) throw new Error('Username taken');
-      user.username = nextUsername;
+      next.username = nextUsername;
     }
-    if (updates.avatar !== undefined) user.avatar = updates.avatar;
+    if (hasOwn(updates, 'avatar') && updates.avatar !== undefined) next.avatar = sanitizeMediaUrl(updates.avatar, 'Profil resmi');
+    if (hasOwn(updates, 'banner') && updates.banner !== undefined) next.banner = sanitizeMediaUrl(updates.banner, 'Profil afişi');
+    if (hasOwn(updates, 'bio') && updates.bio !== undefined) next.bio = sanitizeText(updates.bio, { field: 'Hakkımda', maxLength: 300 });
+    if (hasOwn(updates, 'customStatus') && updates.customStatus !== undefined) {
+      next.customStatus = sanitizeText(updates.customStatus, { field: 'Özel durum', maxLength: 128 });
+      if (/[\r\n\t]/.test(next.customStatus)) throw new Error('Özel durum tek satır olmalıdır.');
+    }
+    if (hasOwn(updates, 'presenceStatus') && updates.presenceStatus !== undefined) {
+      if (!PRESENCE_STATUSES.includes(updates.presenceStatus)) throw new Error('Geçersiz çevrimiçi durumu.');
+      next.presenceStatus = updates.presenceStatus;
+    }
+    if (hasOwn(updates, 'locale') && updates.locale !== undefined) {
+      if (!SUPPORTED_LOCALES.includes(updates.locale)) throw new Error('Desteklenmeyen dil seçimi.');
+      next.locale = updates.locale;
+    }
+    if (hasOwn(updates, 'theme') && updates.theme !== undefined) {
+      if (!SUPPORTED_THEMES.includes(updates.theme)) throw new Error('Desteklenmeyen tema seçimi.');
+      next.theme = updates.theme;
+    }
+    Object.assign(user, next, { updatedAt: Date.now() });
     this.saveData();
     return user;
   }
 
+  blockUser(userId, blockedUserId) {
+    if (userId === blockedUserId || !this.getUserById(userId) || !this.getUserById(blockedUserId)) return null;
+    const blocks = Array.isArray(this.userBlocks.get(userId)) ? this.userBlocks.get(userId) : [];
+    let entry = blocks.find(item => item.userId === blockedUserId);
+    if (!entry) {
+      entry = { userId: blockedUserId, createdAt: Date.now() };
+      blocks.push(entry);
+      this.userBlocks.set(userId, blocks);
+    }
+
+    // Discord'daki davranış gibi engelleme mevcut arkadaşlığı ve iki yöndeki
+    // bekleyen arkadaşlık isteklerini kaldırır.
+    const [id1, id2] = [userId, blockedUserId].sort();
+    this.friendships = this.friendships.filter(item => !(item.user1Id === id1 && item.user2Id === id2));
+    this.friendRequests = this.friendRequests.filter(request => !(
+      (request.fromUserId === userId && request.toUserId === blockedUserId)
+      || (request.fromUserId === blockedUserId && request.toUserId === userId)
+    ));
+    this.saveData();
+    return { ...entry, user: publicUser(this.getUserById(blockedUserId)) };
+  }
+
+  unblockUser(userId, blockedUserId) {
+    const blocks = Array.isArray(this.userBlocks.get(userId)) ? this.userBlocks.get(userId) : [];
+    const next = blocks.filter(item => item.userId !== blockedUserId);
+    if (next.length === blocks.length) return false;
+    if (next.length) this.userBlocks.set(userId, next);
+    else this.userBlocks.delete(userId);
+    this.saveData();
+    return true;
+  }
+
+  isUserBlocked(userId, blockedUserId) {
+    return (this.userBlocks.get(userId) || []).some(entry => entry.userId === blockedUserId);
+  }
+
+  isBlockedEitherDirection(userId1, userId2) {
+    return this.isUserBlocked(userId1, userId2) || this.isUserBlocked(userId2, userId1);
+  }
+
+  getBlockedUsers(userId) {
+    return (this.userBlocks.get(userId) || []).map(entry => {
+      const user = publicUser(this.getUserById(entry.userId));
+      return user ? { ...user, blockedAt: entry.createdAt } : null;
+    }).filter(Boolean);
+  }
+
   getOrCreateDMConversation(userId1, userId2) {
     const [id1, id2] = [userId1, userId2].sort();
-    let dmServer = this.servers.find(server => server.isDM && server.dmUserIds?.includes(id1) && server.dmUserIds?.includes(id2));
+    let dmServer = this.servers.find(server => (
+      server.isDM
+      && !server.isGroupDM
+      && server.dmUserIds?.length === 2
+      && server.dmUserIds.includes(id1)
+      && server.dmUserIds.includes(id2)
+    ));
     if (!dmServer) {
       const serverId = uuidv4();
       dmServer = { id: serverId, name: `DM-${id1}-${id2}`, isDM: true, dmUserIds: [id1, id2], createdAt: Date.now() };
@@ -868,6 +1248,7 @@ class InMemoryStorage {
   }
 
   createFriendRequest(from, to) {
+    if (this.isBlockedEitherDirection(from, to)) return null;
     if (this.friendships.some(friendship => (
       (friendship.user1Id === from && friendship.user2Id === to)
       || (friendship.user1Id === to && friendship.user2Id === from)
@@ -890,6 +1271,7 @@ class InMemoryStorage {
   acceptFriendRequest(requestId) {
     const request = this.friendRequests.find(item => item.id === requestId);
     if (!request) return false;
+    if (this.isBlockedEitherDirection(request.fromUserId, request.toUserId)) return false;
     request.status = 'accepted';
     const [id1, id2] = [request.fromUserId, request.toUserId].sort();
     this.friendships.push({ id: uuidv4(), user1Id: id1, user2Id: id2, createdAt: Date.now() });
@@ -934,5 +1316,8 @@ const storage = new InMemoryStorage();
 storage.PERMISSIONS = PERMISSIONS;
 storage.DEFAULT_MEMBER_PERMISSIONS = DEFAULT_MEMBER_PERMISSIONS;
 storage.ALL_PERMISSIONS = ALL_PERMISSIONS;
+storage.PRESENCE_STATUSES = PRESENCE_STATUSES;
+storage.SUPPORTED_LOCALES = SUPPORTED_LOCALES;
+storage.SUPPORTED_THEMES = SUPPORTED_THEMES;
 
 module.exports = storage;
