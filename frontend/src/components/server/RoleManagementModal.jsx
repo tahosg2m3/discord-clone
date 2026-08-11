@@ -27,14 +27,30 @@ const PERMISSION_GROUPS = [
       ['MANAGE_SERVER', 'Sunucuyu Yönet', 'Sunucu adını ve genel ayarlarını düzenleyebilir.'],
       ['MANAGE_ROLES', 'Rolleri Yönet', 'Roller oluşturabilir, düzenleyebilir ve üyelere verebilir.'],
       ['MANAGE_CHANNELS', 'Kanalları Yönet', 'Metin ve ses kanallarını oluşturabilir veya silebilir.'],
+      ['CREATE_INSTANT_INVITE', 'Davet Oluştur', 'Sunucu için davet bağlantısı oluşturabilir.'],
+      ['VIEW_AUDIT_LOG', 'Denetim Kaydını Gör', 'Sunucudaki yönetim işlemlerini inceleyebilir.'],
+      ['MANAGE_EVENTS', 'Etkinlikleri Yönet', 'Etkinlik oluşturabilir ve düzenleyebilir.'],
+      ['MANAGE_WEBHOOKS', 'Webhook’ları Yönet', 'Webhook ve entegrasyonları yönetebilir.'],
+      ['MANAGE_EMOJIS_AND_STICKERS', 'Emoji ve Sticker Yönet', 'Sunucu emoji ve sticker’larını yönetebilir.'],
     ],
   },
   {
     title: 'ÜYE YÖNETİMİ',
     items: [
       ['KICK_MEMBERS', 'Üyeleri At', 'Üyeleri sunucudan çıkarabilir.'],
+      ['BAN_MEMBERS', 'Üyeleri Yasakla', 'Üyeleri sunucudan kalıcı olarak yasaklayabilir.'],
       ['MODERATE_MEMBERS', 'Üyeleri Sustur', 'Üyelerin metin kanallarına yazmasını geçici olarak engelleyebilir.'],
       ['MANAGE_MESSAGES', 'Mesajları Yönet', 'Başkalarının mesajlarını silebilir.'],
+    ],
+  },
+  {
+    title: 'METİN KANALI İZİNLERİ',
+    items: [
+      ['VIEW_CHANNEL', 'Kanalı Gör', 'İzin verilen kanalları görüntüleyebilir.'],
+      ['SEND_MESSAGES', 'Mesaj Gönder', 'Metin kanallarına mesaj gönderebilir.'],
+      ['MENTION_EVERYONE', '@everyone Kullan', '@everyone ve rolleri etiketleyebilir.'],
+      ['CREATE_PUBLIC_THREADS', 'Mesaj Dizisi Aç', 'Kanallarda herkese açık mesaj dizileri oluşturabilir.'],
+      ['SEND_MESSAGES_IN_THREADS', 'Dizilerde Yaz', 'Mesaj dizilerinde mesaj gönderebilir.'],
     ],
   },
   {
@@ -107,6 +123,9 @@ export default function RoleManagementModal({ serverId, actorId, roles = [], onR
         name: 'yeni-rol',
         color: '#5865F2',
         permissions: [],
+        icon: '',
+        hoist: false,
+        mentionable: false,
       });
       const role = normalizeRole(response);
       if (!role?.id) throw new Error('Rol oluşturulamadı.');
@@ -131,6 +150,9 @@ export default function RoleManagementModal({ serverId, actorId, roles = [], onR
         name: draft.name.trim(),
         color: draft.color || '#99AAB5',
         permissions: normalizePermissions(draft.permissions),
+        icon: draft.icon || '',
+        hoist: Boolean(draft.hoist),
+        mentionable: Boolean(draft.mentionable),
       });
       const updatedRole = normalizeRole(response) || draft;
       replaceRole({ ...draft, ...updatedRole, permissions: normalizePermissions(updatedRole.permissions || draft.permissions) });
@@ -263,7 +285,7 @@ export default function RoleManagementModal({ serverId, actorId, roles = [], onR
           <div className="mt-7 rounded-lg border border-black/25 bg-[#2B2D31] p-4">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
               <div className="flex h-[78px] w-[78px] shrink-0 items-center justify-center rounded-full border-4 border-[#2B2D31] text-2xl font-bold text-white shadow-lg" style={{ backgroundColor: draft.color || '#99AAB5' }}>
-                {roleInitial(draft)}
+                {draft.icon ? <img src={draft.icon} alt="" className="h-full w-full rounded-full object-cover" /> : roleInitial(draft)}
               </div>
               <div className="min-w-0 flex-1">
                 <label className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Rol Adı</label>
@@ -305,6 +327,8 @@ export default function RoleManagementModal({ serverId, actorId, roles = [], onR
                 </label>
               </div>
             </div>
+            <label className="mt-5 block"><span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Rol ikonu bağlantısı</span><input value={draft.icon || ''} onChange={(event) => setDraft((current) => ({ ...current, icon: event.target.value }))} disabled={!isOwner || draft.managed} placeholder="https://ornek.com/rol-ikonu.png" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#F2F3F5] outline-none transition focus:border-[#00A8FC] disabled:opacity-60" /></label>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="flex items-center justify-between rounded-lg bg-[#1E1F22] px-3 py-2.5 text-sm text-[#B5BAC1]"><span>Üyeleri ayrı göster</span><input type="checkbox" checked={Boolean(draft.hoist)} onChange={(event) => setDraft((current) => ({ ...current, hoist: event.target.checked }))} disabled={!isOwner || draft.managed} /></label><label className="flex items-center justify-between rounded-lg bg-[#1E1F22] px-3 py-2.5 text-sm text-[#B5BAC1]"><span>Herkes bu rolü etiketleyebilir</span><input type="checkbox" checked={Boolean(draft.mentionable)} onChange={(event) => setDraft((current) => ({ ...current, mentionable: event.target.checked }))} disabled={!isOwner || draft.managed} /></label></div>
           </div>
 
           {PERMISSION_GROUPS.map((group) => (

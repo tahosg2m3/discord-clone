@@ -20,6 +20,7 @@ const authRoutes = require('./routes/auth');
 const dmRoutes = require('./routes/dm');
 const friendRoutes = require('./routes/friends');
 const uploadRoutes = require('./routes/upload');
+const platformRoutes = require('./routes/platform');
 
 const setupSocketHandlers = require('./sockets');
 const { startPeerServer } = require('./peerServer');
@@ -62,22 +63,41 @@ app.use('/api/auth', authRoutes);
 app.use('/api/dm', dmRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/upload', uploadRoutes);
+// Yeni Discord-benzeri özellikler tam API yollarını kendi router'ında tanımlar.
+// Eski endpoint'ler yukarıda kalır ve geriye dönük uyumluluğunu korur.
+app.use('/api', platformRoutes);
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  if (process.env.DESKTOP_INSTANCE_TOKEN) {
+    res.set('X-Discord-Clone-Instance', process.env.DESKTOP_INSTANCE_TOKEN);
+  }
+  const peerReady = Boolean(peerServerController?.isReady());
+  res.status(peerReady ? 200 : 503).json({
+    status: peerReady ? 'ok' : (peerServerController?.startupError ? 'error' : 'starting'),
+    services: { api: 'ok', peer: peerReady ? 'ok' : 'unavailable' },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 setupSocketHandlers(io);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
+const HOST = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
+let peerServerController = null;
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+server.once('error', error => {
+  console.error(`HTTP server could not start: ${error.message}`);
+  storage.close();
+  process.exit(1);
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
   console.log(`📡 WebSocket server ready`);
   console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
-  
-  startPeerServer();
+
+  peerServerController = startPeerServer();
 });
 
 let isShuttingDown = false;
@@ -87,18 +107,44 @@ function shutdown(signal) {
   isShuttingDown = true;
   console.log(`${signal} signal received: closing HTTP server`);
 
-  // Debounce edilmiş son yazıyı sunucu bağlantılarını kapatmadan önce diske
-  // bas. Electron bu sürece SIGTERM gönderdiğinde de aynı yol çalışır.
+  // Debounce edilmiş son yazıyı bağlantıları kapatmadan önce diske bas.
+  // Paketli Electron, Windows'ta da çalışan IPC kapanış mesajını kullanır.
   storage.flush();
 
+  let pendingServers = 2;
+  let finished = false;
   const finish = () => {
+    if (finished) return;
+    finished = true;
     storage.close();
-    console.log('HTTP server closed');
+    console.log('HTTP and PeerJS servers closed');
     process.exit(0);
   };
+  const markServerClosed = () => {
+    pendingServers -= 1;
+    if (pendingServers <= 0) finish();
+  };
 
-  io.close(() => server.close(finish));
+  try {
+    io.close(() => {
+      if (!server.listening) {
+        markServerClosed();
+        return;
+      }
+
+      server.close(markServerClosed);
+      server.closeIdleConnections?.();
+    });
+  } catch (_) {
+    if (server.listening) server.close(markServerClosed);
+    else markServerClosed();
+  }
+
+  if (peerServerController) peerServerController.close(markServerClosed);
+  else markServerClosed();
+
   setTimeout(() => {
+    if (finished) return;
     storage.close();
     process.exit(1);
   }, 10_000).unref();
@@ -106,5 +152,11 @@ function shutdown(signal) {
 
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('message', message => {
+  if (message?.type === 'discord-clone:shutdown') shutdown('IPC');
+});
+process.parentPort?.once('message', event => {
+  if (event?.data?.type === 'discord-clone:shutdown') shutdown('IPC');
+});
 
 app.set('io', io);

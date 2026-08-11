@@ -18,6 +18,9 @@ import DMArea from './components/dm/DMArea';
 import FriendsList from './components/friends/FriendsList';
 import UserProfile from './components/profile/UserProfile';
 import NotificationCenter from './components/notifications/NotificationCenter';
+import ForumArea from './components/forum/ForumArea';
+import OnboardingGate from './components/server/OnboardingGate';
+import NsfwGate from './components/server/NsfwGate';
 
 function AppContent() {
   const { user } = useAuth();
@@ -31,7 +34,10 @@ function AppContent() {
 
     const removeServerFromView = ({ serverId, reason }) => {
       setServers(previous => previous.filter(server => server.id !== serverId));
-      if (currentServer?.id !== serverId) return;
+      if (currentServer?.id !== serverId) {
+        if (reason) toast.error(reason);
+        return;
+      }
 
       if (activeVoiceChannel?.serverId === serverId) leaveVoiceChannel();
       setCurrentServer(null);
@@ -43,6 +49,10 @@ function AppContent() {
     const handleKicked = ({ serverId, reason }) => removeServerFromView({
       serverId,
       reason: reason ? `Sunucudan çıkarıldın: ${reason}` : 'Bir moderatör seni sunucudan çıkardı.',
+    });
+    const handleBanned = ({ serverId, reason }) => removeServerFromView({
+      serverId,
+      reason: reason ? `Sunucudan yasaklandın: ${reason}` : 'Bir moderatör seni sunucudan yasakladı.',
     });
     const handleDeleted = ({ serverId }) => removeServerFromView({ serverId, reason: 'Bu sunucu silindi.' });
     const handleModerated = ({ serverId, action, byUsername }) => {
@@ -65,11 +75,13 @@ function AppContent() {
     };
 
     socket.on('server:kicked', handleKicked);
+    socket.on('server:banned', handleBanned);
     socket.on('server:deleted', handleDeleted);
     socket.on('server:updated', handleUpdated);
     socket.on('server:moderated', handleModerated);
     return () => {
       socket.off('server:kicked', handleKicked);
+      socket.off('server:banned', handleBanned);
       socket.off('server:deleted', handleDeleted);
       socket.off('server:updated', handleUpdated);
       socket.off('server:moderated', handleModerated);
@@ -81,6 +93,7 @@ function AppContent() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0f172a] text-[#e2e8f0] font-sans selection:bg-[#2563eb] selection:text-white">
       <NotificationCenter />
+      <OnboardingGate />
       
       <ServerList viewMode={viewMode} setViewMode={setViewMode} />
 
@@ -99,7 +112,7 @@ function AppContent() {
         {viewMode === 'servers' ? (
           currentChannel ? (
             <>
-              <ChatArea />
+              <NsfwGate channel={currentChannel}>{currentChannel.type === 'forum' ? <ForumArea /> : <ChatArea />}</NsfwGate>
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[#949BA4] select-none">

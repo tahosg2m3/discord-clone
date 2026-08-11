@@ -1,4 +1,6 @@
 const storage = require('../../storage/inMemory');
+const { platformService } = require('../../services/platformService');
+const { getChannelViewerSockets } = require('../authorizedEmit');
 
 // channelId -> [{ userId, username, peerId, socketId, streamMode, audioEnabled }]
 const voiceChannels = new Map();
@@ -10,6 +12,10 @@ const VOICE_MODERATION_ACTIONS = {
   undeafen: { permission: 'DEAFEN_MEMBERS', changes: { serverDeafened: false } },
   disconnect: { permission: 'MOVE_MEMBERS' },
 };
+
+const SOUNDBOARD_SOUND_IDS = new Set([
+  'airhorn', 'applause', 'laugh', 'drumroll', 'tada', 'rimshot', 'notification', 'boop',
+]);
 
 function sameId(first, second) {
   return String(first || '') === String(second || '');
@@ -29,26 +35,45 @@ function getVoiceCapabilities(channel, userId) {
     serverMuted: false,
     serverDeafened: false,
     isTimedOut: false,
+    verificationRequired: false,
   };
 
-  if (!channel || channel.type !== 'voice') return empty;
+  if (!channel || !['voice', 'stage'].includes(channel.type)) return empty;
   const server = storage.getServerById(channel.serverId);
   if (!server || server.isDM || !storage.isServerMember(server.id, userId)) return empty;
 
   const moderation = storage.getMemberModerationState(server.id, userId);
-  const canConnect = !moderation.isTimedOut && storage.hasPermission(server.id, userId, 'CONNECT');
+  const isVerified = server.creatorId === userId
+    || storage.hasPermission(server.id, userId, 'ADMINISTRATOR')
+    || platformService.isMemberVerified(server.id, userId);
+  const canConnect = isVerified && !moderation.isTimedOut
+    && platformService.hasChannelPermission(channel.id, userId, 'CONNECT');
   return {
     channelId: channel.id,
     serverId: server.id,
     canConnect,
-    canSpeak: canConnect && storage.hasPermission(server.id, userId, 'SPEAK'),
-    canStream: canConnect && storage.hasPermission(server.id, userId, 'STREAM'),
+    canSpeak: canConnect && platformService.hasChannelPermission(channel.id, userId, 'SPEAK'),
+    canStream: canConnect && platformService.hasChannelPermission(channel.id, userId, 'STREAM'),
+    verificationRequired: !isVerified,
     ...moderation,
   };
 }
 
 function isVoiceChannelAccessible(channel, userId) {
   return getVoiceCapabilities(channel, userId).canConnect;
+}
+
+function withStageRole(channel, capabilities, participant = null) {
+  if (channel?.type !== 'stage') return capabilities;
+  const stageRole = participant?.stageRole || 'audience';
+  const isSpeaker = stageRole === 'speaker';
+  return {
+    ...capabilities,
+    stageRole,
+    requestedToSpeak: Boolean(participant?.requestedToSpeak),
+    canSpeak: capabilities.canSpeak && isSpeaker,
+    canStream: capabilities.canStream && isSpeaker,
+  };
 }
 
 function getPublicMembers(channelId) {
@@ -62,19 +87,20 @@ function getPublicMembers(channelId) {
       username: participant.username,
       peerId: participant.peerId,
       streamMode: participant.streamMode || 'none',
+      stageRole: channel.type === 'stage' ? (participant.stageRole || 'audience') : null,
+      requestedToSpeak: channel.type === 'stage' ? Boolean(participant.requestedToSpeak) : false,
       ...moderation,
     };
   });
 }
 
 function broadcastVoiceMembers(io, channelId) {
-  const channel = storage.getChannelById(channelId);
-  if (!channel) return;
-
-  io.to(`server:${channel.serverId}`).emit('voice:channel-members', {
+  const payload = {
     channelId,
     members: getPublicMembers(channelId),
-  });
+  };
+  getChannelViewerSockets(io, channelId)
+    .forEach(targetSocket => targetSocket.emit('voice:channel-members', payload));
 }
 
 function reply(callback, payload) {
@@ -92,6 +118,10 @@ function removeVoiceSocket(io, channelId, socketId, { notify = true } = {}) {
 
   const [participant] = users.splice(userIndex, 1);
   const channel = storage.getChannelById(channelId);
+  if (channel && participant.joinedAt) {
+    const voiceMinutes = Math.max(0, (Date.now() - participant.joinedAt) / 60_000);
+    if (voiceMinutes > 0) platformService.recordServerStat(channel.serverId, 'voiceMinutes', voiceMinutes);
+  }
   const targetSocket = io.sockets.sockets.get(socketId);
   targetSocket?.leave(`voice:${channelId}`);
 
@@ -102,8 +132,27 @@ function removeVoiceSocket(io, channelId, socketId, { notify = true } = {}) {
       userId: participant.userId,
     });
   }
-  if (users.length === 0) voiceChannels.delete(channelId);
-  broadcastVoiceMembers(io, channelId);
+  if (users.length === 0) {
+    voiceChannels.delete(channelId);
+    if (channel?.temporary) {
+      const serverId = channel.serverId;
+      const viewers = getChannelViewerSockets(io, channelId);
+      const managers = getChannelViewerSockets(io, channelId, 'MANAGE_CHANNELS');
+      platformService.deleteChannelData?.(channelId);
+      storage.deleteChannel(channelId);
+      viewers.forEach(targetSocket => targetSocket.emit('channels:changed', { serverId }));
+      const update = {
+        serverId,
+        scope: 'channels',
+        action: 'temporary-deleted',
+        data: {},
+        timestamp: Date.now(),
+      };
+      managers.forEach(targetSocket => targetSocket.emit('platform:update', update));
+    }
+  } else {
+    broadcastVoiceMembers(io, channelId);
+  }
   return participant;
 }
 
@@ -128,6 +177,7 @@ function disconnectUserFromServerVoice(io, serverId, userId) {
 }
 
 module.exports = (io, socket) => {
+  let lastSoundboardPlayAt = 0;
   const fail = (message, callback, capabilities) => {
     if (capabilities) sendCapabilities(socket, capabilities);
     socket.emit('voice:error', { message });
@@ -138,7 +188,8 @@ module.exports = (io, socket) => {
     const userId = socket.userData?.userId;
     const channelId = String(data.channelId || '');
     const channel = storage.getChannelById(channelId);
-    const capabilities = getVoiceCapabilities(channel, userId);
+    const participant = (voiceChannels.get(channelId) || []).find(member => sameId(member.userId, userId));
+    const capabilities = withStageRole(channel, getVoiceCapabilities(channel, userId), participant);
 
     if (!socket.userData?.authenticated || !userId || !channelId || !capabilities.canConnect) {
       reply(callback, {
@@ -195,6 +246,9 @@ module.exports = (io, socket) => {
         socketId: socket.id,
         streamMode: 'none',
         audioEnabled: false,
+        stageRole: channel.type === 'stage' ? 'audience' : null,
+        requestedToSpeak: false,
+        joinedAt: Date.now(),
       });
     }
 
@@ -217,12 +271,16 @@ module.exports = (io, socket) => {
         username: member.username,
         peerId: member.peerId,
         streamMode: member.streamMode || 'none',
+        stageRole: channel.type === 'stage' ? (member.stageRole || 'audience') : null,
+        requestedToSpeak: channel.type === 'stage' ? Boolean(member.requestedToSpeak) : false,
         ...storage.getMemberModerationState(channel.serverId, member.userId),
       })));
-    sendCapabilities(socket, capabilities);
-    socket.emit('voice:moderation-state', capabilities);
+    const participant = users.find(member => sameId(member.userId, userId));
+    const effectiveCapabilities = withStageRole(channel, capabilities, participant);
+    sendCapabilities(socket, effectiveCapabilities);
+    socket.emit('voice:moderation-state', effectiveCapabilities);
     broadcastVoiceMembers(io, channelId);
-    reply(callback, { success: true, capabilities });
+    reply(callback, { success: true, capabilities: effectiveCapabilities });
   });
 
   socket.on('voice:leave', () => {
@@ -236,9 +294,10 @@ module.exports = (io, socket) => {
     const kind = String(data.kind || 'video').toLowerCase();
     const mode = String(data.mode || 'camera').toLowerCase();
     const channel = storage.getChannelById(channelId);
-    const capabilities = getVoiceCapabilities(channel, userId);
+    const baseCapabilities = getVoiceCapabilities(channel, userId);
     const users = voiceChannels.get(channelId) || [];
     const participant = users.find((member) => member.socketId === socket.id && sameId(member.userId, userId));
+    const capabilities = withStageRole(channel, baseCapabilities, participant);
 
     if (!socket.userData?.authenticated || !participant || !capabilities.canConnect) {
       fail('Ses kanalındaki bağlantın doğrulanamadı.', callback, capabilities);
@@ -256,7 +315,9 @@ module.exports = (io, socket) => {
       fail('Bu ses kanalında yayın veya kamera açma yetkin yok.', callback, capabilities);
       return;
     }
-    if (kind === 'audio' && data.enabled !== false && (!capabilities.canSpeak || capabilities.serverMuted)) {
+    if (kind === 'audio' && data.enabled !== false
+      && (!capabilities.canSpeak || capabilities.serverMuted
+        || (channel.type === 'stage' && participant.stageRole !== 'speaker'))) {
       fail('Bu ses kanalında konuşma yetkin yok.', callback, capabilities);
       return;
     }
@@ -282,9 +343,112 @@ module.exports = (io, socket) => {
     if (!socket.userData?.authenticated || !storage.isServerMember(serverId, userId)) return;
 
     const channels = storage.getChannelsByServerId(serverId)
-      .filter((channel) => channel.type === 'voice')
+      .filter((channel) => ['voice', 'stage'].includes(channel.type)
+        && platformService.hasChannelPermission(channel.id, userId, 'VIEW_CHANNEL'))
       .map((channel) => ({ channelId: channel.id, members: getPublicMembers(channel.id) }));
     socket.emit('voice:channels-snapshot', { serverId, channels });
+  });
+
+  socket.on('voice:stage:request-to-speak', (data = {}, callback) => {
+    const userId = socket.userData?.userId;
+    const channelId = String(data.channelId || '');
+    const channel = storage.getChannelById(channelId);
+    const participant = (voiceChannels.get(channelId) || [])
+      .find(member => member.socketId === socket.id && sameId(member.userId, userId));
+    if (!socket.userData?.authenticated || channel?.type !== 'stage' || !participant) {
+      reply(callback, { success: false, error: 'Stage kanalındaki bağlantın doğrulanamadı.' });
+      return;
+    }
+    participant.requestedToSpeak = true;
+    participant.stageRole = participant.stageRole || 'audience';
+    io.to(`voice:${channelId}`).emit('voice:stage:update', {
+      channelId,
+      serverId: channel.serverId,
+      userId,
+      stageRole: participant.stageRole,
+      requestedToSpeak: true,
+    });
+    broadcastVoiceMembers(io, channelId);
+    reply(callback, { success: true, stageRole: participant.stageRole, requestedToSpeak: true });
+  });
+
+  socket.on('voice:stage:moderate', (data = {}, callback) => {
+    const actorId = socket.userData?.userId;
+    const channelId = String(data.channelId || '');
+    const targetUserId = String(data.targetUserId || '');
+    const action = String(data.action || '').toLowerCase();
+    const channel = storage.getChannelById(channelId);
+    const target = (voiceChannels.get(channelId) || []).find(member => sameId(member.userId, targetUserId));
+    const server = channel && storage.getServerById(channel.serverId);
+    const validAction = ['invite', 'audience', 'approve', 'deny'].includes(action);
+    const hasPermission = server && (
+      server.creatorId === actorId
+      || platformService.hasChannelPermission(channelId, actorId, 'MANAGE_CHANNELS')
+      || platformService.hasChannelPermission(channelId, actorId, 'MUTE_MEMBERS')
+      || platformService.hasChannelPermission(channelId, actorId, 'MOVE_MEMBERS')
+    );
+    const hierarchyAllowed = server?.creatorId === actorId
+      || storage.canManageMember(channel?.serverId, actorId, targetUserId);
+    if (!socket.userData?.authenticated || channel?.type !== 'stage' || !target || !validAction
+      || !hasPermission || !hierarchyAllowed) {
+      reply(callback, { success: false, error: 'Bu Stage işlemi için yetkin veya rol hiyerarşin yeterli değil.' });
+      return;
+    }
+    if (action === 'invite' || action === 'approve') target.stageRole = 'speaker';
+    if (action === 'audience' || action === 'deny') target.stageRole = 'audience';
+    target.requestedToSpeak = false;
+    if (target.stageRole === 'audience') target.audioEnabled = false;
+    const payload = {
+      channelId,
+      serverId: channel.serverId,
+      userId: targetUserId,
+      action,
+      stageRole: target.stageRole,
+      requestedToSpeak: false,
+      moderatedBy: actorId,
+    };
+    io.to(`voice:${channelId}`).emit('voice:stage:update', payload);
+    io.to(`user:${targetUserId}`).emit('voice:stage:moderated', payload);
+    const targetCapabilities = withStageRole(channel, getVoiceCapabilities(channel, targetUserId), target);
+    io.to(`user:${targetUserId}`).emit('voice:capabilities', targetCapabilities);
+    broadcastVoiceMembers(io, channelId);
+    reply(callback, { success: true, ...payload });
+  });
+
+  socket.on('voice:soundboard:play', (data = {}, callback) => {
+    const userId = socket.userData?.userId;
+    const channelId = String(data.channelId || '');
+    const soundId = String(data.soundId || '').toLowerCase();
+    const channel = storage.getChannelById(channelId);
+    const participant = (voiceChannels.get(channelId) || [])
+      .find(member => member.socketId === socket.id && sameId(member.userId, userId));
+    const now = Date.now();
+    if (!socket.userData?.authenticated || !participant || !['voice', 'stage'].includes(channel?.type)
+      || !SOUNDBOARD_SOUND_IDS.has(soundId)
+      || !platformService.hasChannelPermission(channelId, userId, 'SPEAK')) {
+      reply(callback, { success: false, error: 'Bu ses tahtası işlemi geçersiz veya yetkin yok.' });
+      return;
+    }
+    if (channel.type === 'stage' && participant.stageRole !== 'speaker') {
+      reply(callback, { success: false, error: 'Stage dinleyicileri ses tahtasını kullanamaz.' });
+      return;
+    }
+    const retryAfterMs = Math.max(0, 2000 - (now - lastSoundboardPlayAt));
+    if (retryAfterMs > 0) {
+      reply(callback, { success: false, error: 'Ses tahtasını çok hızlı kullanıyorsun.', retryAfterMs });
+      return;
+    }
+    lastSoundboardPlayAt = now;
+    const payload = {
+      channelId,
+      serverId: channel.serverId,
+      userId,
+      username: socket.userData.username,
+      soundId,
+      createdAt: now,
+    };
+    io.to(`voice:${channelId}`).emit('voice:soundboard:play', payload);
+    reply(callback, { success: true, ...payload });
   });
 
   socket.on('voice:moderate', (data = {}, callback) => {

@@ -29,6 +29,7 @@ function publicUser(user) {
 
 function publicProfile(user) {
   const { password, email, tokenVersion, ...safeUser } = user;
+  if (safeUser.presenceStatus === 'invisible') safeUser.presenceStatus = 'offline';
   return safeUser;
 }
 

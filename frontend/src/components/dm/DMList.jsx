@@ -1,45 +1,90 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, Search } from 'lucide-react';
 import { useDM } from '../../context/DMContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { fetchDMConversations } from '../../services/api';
 import { getColorForString } from '../../utils/colors';
+import CreateGroupDMModal from './CreateGroupDMModal';
+import GroupDMAvatar from './GroupDMAvatar';
+
+function isGroupDM(conversation) {
+  return conversation?.type === 'group' || conversation?.isGroupDM;
+}
+
+function upsertConversation(conversations, conversation) {
+  if (!conversation?.id) return conversations;
+  const exists = conversations.some((item) => item.id === conversation.id);
+  return exists
+    ? conversations.map((item) => item.id === conversation.id ? { ...item, ...conversation } : item)
+    : [conversation, ...conversations];
+}
 
 export default function DMList({ setViewMode }) {
   const { user } = useAuth();
   const { activeDM, setActiveDM } = useDM();
   const { socket } = useSocket();
   const [dms, setDms] = useState([]);
+  const [query, setQuery] = useState('');
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+
+  const loadConversations = useCallback(() => {
+    if (!user?.id) return Promise.resolve([]);
+    return fetchDMConversations(user.id)
+      .then((conversations) => {
+        const safeConversations = Array.isArray(conversations) ? conversations : [];
+        setDms(safeConversations);
+        setActiveDM((current) => {
+          if (!current?.id) return current;
+          const refreshed = safeConversations.find((conversation) => conversation.id === current.id);
+          return refreshed ? { ...current, ...refreshed } : current;
+        });
+        return safeConversations;
+      });
+  }, [setActiveDM, user?.id]);
 
   useEffect(() => {
-    if (user?.id) {
-      fetchDMConversations(user.id).then(setDms).catch(console.error);
-    }
-  }, [user]);
+    loadConversations().catch(console.error);
+  }, [loadConversations]);
 
   useEffect(() => {
-    if (!socket || !user) return;
-    
-    // Yeni mesaj bildirimi gelirse listeyi güncelle
-    const handleNotification = () => {
-      fetchDMConversations(user.id).then(setDms).catch(console.error);
+    if (!socket || !user) return undefined;
+
+    const handleNotification = () => loadConversations().catch(console.error);
+    const handleGroupCreated = ({ conversation } = {}) => {
+      if (!conversation?.id) return;
+      setDms((current) => upsertConversation(current, conversation));
     };
-    
+    const handleGroupUpdated = ({ conversation } = {}) => {
+      if (!conversation?.id) return;
+      setDms((current) => upsertConversation(current, conversation));
+      setActiveDM((current) => current?.id === conversation.id ? { ...current, ...conversation } : current);
+    };
+    const handleGroupRemoved = ({ conversationId } = {}) => {
+      if (!conversationId) return;
+      setDms((current) => current.filter((conversation) => conversation.id !== conversationId));
+      setActiveDM((current) => current?.id === conversationId ? null : current);
+    };
+
     socket.on('dm:notification', handleNotification);
-    
+    socket.on('dm:group-created', handleGroupCreated);
+    socket.on('dm:group-updated', handleGroupUpdated);
+    socket.on('dm:group-removed', handleGroupRemoved);
     return () => {
       socket.off('dm:notification', handleNotification);
+      socket.off('dm:group-created', handleGroupCreated);
+      socket.off('dm:group-updated', handleGroupUpdated);
+      socket.off('dm:group-removed', handleGroupRemoved);
     };
-  }, [socket, user]);
+  }, [loadConversations, setActiveDM, socket, user]);
 
   useEffect(() => {
     if (!user?.id) return undefined;
 
     const handleExternalDMOpen = (event) => {
       const requestedConversation = event.detail?.conversation;
-      fetchDMConversations(user.id)
+      loadConversations()
         .then((conversations) => {
-          setDms(conversations);
           const completeConversation = conversations.find((conversation) => conversation.id === requestedConversation?.id);
           if (completeConversation) setActiveDM(completeConversation);
         })
@@ -48,70 +93,84 @@ export default function DMList({ setViewMode }) {
 
     window.addEventListener('discord:navigate-to-dm', handleExternalDMOpen);
     return () => window.removeEventListener('discord:navigate-to-dm', handleExternalDMOpen);
-  }, [setActiveDM, user?.id]);
+  }, [loadConversations, setActiveDM, user?.id]);
 
-  const handleSelectDM = (dm) => {
-    // Eski DM odasından çık
-    if (activeDM?.channelId && socket) {
-      socket.emit('user:leave', { channelId: activeDM.channelId });
-    }
-    
+  const handleSelectDM = useCallback((dm) => {
+    if (activeDM?.channelId && socket) socket.emit('user:leave', { channelId: activeDM.channelId });
     setActiveDM(dm);
-    if (setViewMode) setViewMode('dms');
-    
-    // Normal bir sunucu kanalıymış gibi odaya katıl
-    if (socket) {
-      socket.emit('user:join', { 
-        username: user.username,
-        serverId: dm.id,
-        channelId: dm.channelId 
-      });
-    }
+    setViewMode?.('dms');
+    socket?.emit('user:join', {
+      username: user.username,
+      serverId: dm.id,
+      channelId: dm.channelId,
+    });
+  }, [activeDM?.channelId, setActiveDM, setViewMode, socket, user.username]);
+
+  const visibleDMs = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase('tr');
+    if (!normalized) return dms;
+    return dms.filter((dm) => {
+      const label = isGroupDM(dm) ? dm.name : dm.otherUser?.username;
+      return String(label || '').toLocaleLowerCase('tr').includes(normalized);
+    });
+  }, [dms, query]);
+
+  const handleCreated = (conversation) => {
+    setDms((current) => upsertConversation(current, conversation));
+    setShowCreateGroup(false);
+    handleSelectDM(conversation);
   };
 
   return (
-    <div className="w-[240px] bg-[#2B2D31] flex flex-col h-full overflow-y-auto custom-scrollbar border-r border-[#1E1F22]/50">
-      <div className="h-12 px-4 flex items-center shadow-sm border-b border-[#1E1F22] shrink-0 sticky top-0 bg-[#2B2D31] z-10">
-        <button className="w-full bg-[#1E1F22] text-[#949BA4] text-[13px] font-medium text-left px-2 py-1.5 rounded-md hover:bg-[#111214] transition-colors">
-          Bir sohbet bul veya başlat
-        </button>
-      </div>
+    <>
+      <div className="flex h-full w-[256px] flex-col overflow-y-auto border-r border-[#1E1F22]/50 bg-[#151b27] custom-scrollbar">
+        <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-[#151b27] px-3 shadow-sm">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#64748b]" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Sohbet bul" className="w-full rounded-lg border border-white/[0.06] bg-[#0f172a] py-2 pl-8 pr-2 text-[13px] text-[#e2e8f0] outline-none placeholder:text-[#64748b] focus:border-[#3b82f6]/60" />
+          </div>
+          <button type="button" onClick={() => setShowCreateGroup(true)} className="rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.08] hover:text-white" title="Grup mesajı oluştur" aria-label="Grup mesajı oluştur"><Plus className="h-5 w-5" /></button>
+        </div>
 
-      <div className="p-2">
-        <h3 className="text-[12px] font-bold text-[#949BA4] uppercase mb-2 px-2 hover:text-[#DBDEE1] cursor-pointer tracking-wide flex justify-between items-center group">
-          <span>Direkt Mesajlar</span>
-        </h3>
-        
-        <div className="space-y-0.5">
-          {dms.map(dm => {
-            const isActive = activeDM?.id === dm.id;
-            const avatarColor = getColorForString(dm.otherUser.username);
-            const initial = dm.otherUser.username[0].toUpperCase();
+        <div className="p-2">
+          <div className="mb-2 flex items-center justify-between px-2">
+            <h3 className="text-[11px] font-bold uppercase tracking-wide text-[#94a3b8]">Direkt Mesajlar</h3>
+            <button type="button" onClick={() => setShowCreateGroup(true)} className="rounded p-1 text-[#64748b] hover:bg-white/[0.06] hover:text-white" title="Grup mesajı oluştur"><Plus className="h-3.5 w-3.5" /></button>
+          </div>
 
-            return (
-              <div 
-                key={dm.id} 
-                onClick={() => handleSelectDM(dm)}
-                className={`flex items-center space-x-3 p-2 rounded-[4px] cursor-pointer group transition-colors ${isActive ? 'bg-[#404249] text-white' : 'hover:bg-[#313338] text-[#949BA4] hover:text-[#DBDEE1]'}`}
-              >
-                <div className="relative shrink-0">
-                  {dm.otherUser.avatar && !dm.otherUser.avatar.includes('ui-avatars.com') ? (
-                    <img src={dm.otherUser.avatar} className="w-8 h-8 rounded-full object-cover" alt="" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[14px] font-semibold" style={{ backgroundColor: avatarColor }}>
-                      {initial}
-                    </div>
-                  )}
-                  {dm.otherUser.status && (
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full border-[3px] border-[#2B2D31] transition-colors ${isActive ? 'border-[#404249]' : 'group-hover:border-[#313338]'} ${dm.otherUser.status === 'online' ? 'bg-[#23A559]' : 'bg-[#80848E]'}`}></div>
-                  )}
-                </div>
-                <div className="flex-1 truncate text-[15px] font-medium">{dm.otherUser.username}</div>
-              </div>
-            );
-          })}
+          <div className="space-y-0.5">
+            {visibleDMs.map((dm) => {
+              const group = isGroupDM(dm);
+              const directUser = dm.otherUser;
+              if (!group && !directUser) return null;
+              const isActive = activeDM?.id === dm.id;
+              const label = group ? (dm.name || 'Yeni Grup') : directUser.username;
+              const status = directUser?.presenceStatus || directUser?.status;
+              const online = status && !['offline', 'invisible'].includes(status);
+
+              return (
+                <button key={dm.id} type="button" onClick={() => handleSelectDM(dm)} className={`group flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors ${isActive ? 'bg-white/[0.1] text-white' : 'text-[#94a3b8] hover:bg-white/[0.06] hover:text-[#DBDEE1]'}`}>
+                  <div className="relative shrink-0">
+                    {group ? <GroupDMAvatar conversation={dm} size={34} /> : directUser.avatar && !directUser.avatar.includes('ui-avatars.com') ? (
+                      <img src={directUser.avatar} className="h-[34px] w-[34px] rounded-full object-cover" alt="" />
+                    ) : (
+                      <div className="flex h-[34px] w-[34px] items-center justify-center rounded-full text-[14px] font-semibold text-white" style={{ backgroundColor: getColorForString(directUser.username) }}>{directUser.username[0].toUpperCase()}</div>
+                    )}
+                    {!group && status && <span className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-[3px] ${isActive ? 'border-[#2a3140]' : 'border-[#151b27] group-hover:border-[#202838]'} ${online ? status === 'idle' ? 'bg-[#f0b232]' : status === 'dnd' ? 'bg-[#f23f43]' : 'bg-[#23A559]' : 'bg-[#80848E]'}`} />}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-medium">{label}</span>
+                    {group && <span className="block truncate text-[11px] text-[#64748b]">{dm.memberIds?.length || dm.members?.length || 0} üye</span>}
+                  </span>
+                </button>
+              );
+            })}
+            {visibleDMs.length === 0 && <p className="px-3 py-6 text-center text-xs leading-5 text-[#64748b]">{query ? 'Eşleşen sohbet bulunamadı.' : 'Henüz direkt mesajın yok.'}</p>}
+          </div>
         </div>
       </div>
-    </div>
+
+      {showCreateGroup && <CreateGroupDMModal onClose={() => setShowCreateGroup(false)} onCreated={handleCreated} />}
+    </>
   );
 }

@@ -5,11 +5,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useServer } from '../../context/ServerContext';
 import toast from 'react-hot-toast';
 
-export default function JoinServerModal({ onClose }) {
+export default function JoinServerModal({ onClose, onJoined }) {
   const [inviteCode, setInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
-  const { setServers, setCurrentServer } = useServer();
+  const { setServers, setCurrentServer, setCurrentChannel } = useServer();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -20,11 +20,13 @@ export default function JoinServerModal({ onClose }) {
       const server = await joinServer(inviteCode.trim(), user.id);
       
       // State'i güncelle ve yeni sunucuya git
-      setServers(prev => [...prev, server]);
+      setServers(prev => prev.some(item => item.id === server.id) ? prev.map(item => item.id === server.id ? { ...item, ...server } : item) : [...prev, server]);
+      setCurrentChannel(null);
       setCurrentServer(server);
       
       toast.success(`Joined ${server.name}!`);
-      onClose();
+      onJoined?.(server);
+      onClose?.();
     } catch (error) {
       toast.error(error.message || 'Failed to join server');
     } finally {

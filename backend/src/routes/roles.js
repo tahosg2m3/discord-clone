@@ -1,7 +1,9 @@
 const express = require('express');
 
 const storage = require('../storage/inMemory');
+const { platformService } = require('../services/platformService');
 const { requireAuth } = require('../middleware/auth');
+const { emitAudit } = require('../sockets/authorizedEmit');
 const { requireServerMember, requireServerOwner } = require('../middleware/authorization');
 const { disconnectUserFromServerVoice } = require('../sockets/handlers/voiceHandler');
 
@@ -32,6 +34,18 @@ function emitMemberUpdated(req, serverId, userId) {
   return member;
 }
 
+function writeAudit(req, serverId, action, targetType, targetId, metadata = {}) {
+  const entry = platformService.addAuditLog(serverId, {
+    action,
+    actorId: req.user.id,
+    actorUsername: req.user.username,
+    targetType,
+    targetId,
+    metadata,
+  });
+  emitAudit(req.app.get('io'), serverId, entry);
+}
+
 router.use(requireAuth);
 
 router.get('/:serverId/roles', requireServerMember, (req, res) => {
@@ -51,11 +65,15 @@ router.post('/:serverId/roles', requireServerOwner, (req, res) => {
   const role = storage.createServerRole(req.params.serverId, {
     name,
     color: req.body.color,
+    icon: req.body.icon,
+    hoist: req.body.hoist,
+    mentionable: req.body.mentionable,
     permissions: req.body.permissions,
   });
   if (!role) return res.status(400).json({ error: 'Rol oluşturulamadı.' });
 
   emitRolesChanged(req, req.params.serverId);
+  writeAudit(req, req.params.serverId, 'ROLE_CREATE', 'role', role.id, { name: role.name });
   return res.status(201).json({ role });
 });
 
@@ -101,11 +119,15 @@ router.patch('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
   const updated = storage.updateServerRole(serverId, req.params.roleId, {
     name: req.body.name,
     color: req.body.color,
+    icon: req.body.icon,
+    hoist: req.body.hoist,
+    mentionable: req.body.mentionable,
     permissions: req.body.permissions,
   });
   if (!updated) return res.status(400).json({ error: 'Rol güncellenemedi.' });
 
   emitRolesChanged(req, serverId);
+  writeAudit(req, serverId, 'ROLE_UPDATE', 'role', updated.id, { name: updated.name });
   req.app.get('io')?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
   return res.json({ role: updated });
 });
@@ -115,6 +137,7 @@ router.delete('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
     return res.status(400).json({ error: '@everyone rolü silinemez veya rol bulunamadı.' });
   }
   emitRolesChanged(req, req.params.serverId);
+  writeAudit(req, req.params.serverId, 'ROLE_DELETE', 'role', req.params.roleId);
   req.app.get('io')?.to(`server:${req.params.serverId}`).emit('server:members-changed', { serverId: req.params.serverId });
   return res.json({ success: true });
 });
@@ -139,6 +162,7 @@ router.patch('/:serverId/members/:userId/roles', requireServerOwner, (req, res) 
   const member = storage.setMemberRoles(req.params.serverId, req.params.userId, req.body.roleIds);
   if (!member) return res.status(400).json({ error: 'Rol atamaları geçersiz.' });
   emitMemberUpdated(req, req.params.serverId, req.params.userId);
+  writeAudit(req, req.params.serverId, 'MEMBER_ROLES_UPDATE', 'user', req.params.userId, { roleIds: req.body.roleIds });
   return res.json({ member });
 });
 
@@ -160,6 +184,7 @@ router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, re
   if (action === 'kick') {
     disconnectUserFromServerVoice(io, serverId, targetUserId);
     storage.removeServerMember(serverId, targetUserId);
+    platformService.revokeRulesAcknowledgement(serverId, targetUserId);
     io?.in(`user:${targetUserId}`).socketsLeave(`server:${serverId}`);
     io?.to(`user:${targetUserId}`).emit('server:kicked', {
       serverId,
@@ -173,6 +198,8 @@ router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, re
     });
     io?.to(`server:${serverId}`).emit('server:member-kicked', { serverId, userId: targetUserId });
     io?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
+    platformService.recordServerStat(serverId, 'membersLeft');
+    writeAudit(req, serverId, 'MEMBER_KICK', 'user', targetUserId, { reason });
     return res.json({ success: true, action });
   }
 
@@ -214,6 +241,7 @@ router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, re
         state,
       });
     }
+    writeAudit(req, serverId, `MEMBER_${action.toUpperCase()}`, 'user', targetUserId, { reason, state });
     return res.json({ success: true, action, member });
   }
 
@@ -225,6 +253,7 @@ router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, re
     byUsername: req.user.username,
     reason,
   });
+  writeAudit(req, serverId, 'MEMBER_DISCONNECT', 'user', targetUserId, { reason });
   return res.json({ success: true, action });
 });
 

@@ -1,35 +1,100 @@
 const { messageService } = require('../../services/messageService');
+const { messageModerationService } = require('../../services/messageModerationService');
+const { platformService } = require('../../services/platformService');
 const storage = require('../../storage/inMemory');
+const { emitAudit, emitToChannelViewers } = require('../authorizedEmit');
+
+function safeVoiceMessage(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const url = typeof value.url === 'string' ? value.url.trim().slice(0, 2048) : '';
+  const isSafeUrl = /^\/uploads\/[A-Za-z0-9._-]+$/.test(url) || /^https?:\/\//i.test(url);
+  const durationMs = Number(value.durationMs);
+  if (!isSafeUrl || !Number.isFinite(durationMs) || durationMs < 100 || durationMs > 600_000) return null;
+  const waveform = Array.isArray(value.waveform)
+    ? value.waveform.slice(0, 256).map(point => Math.min(1, Math.max(0, Number(point) || 0)))
+    : [];
+  const mimeType = /^audio\/[a-z0-9.+-]+$/i.test(String(value.mimeType || ''))
+    ? String(value.mimeType).slice(0, 100)
+    : 'audio/webm';
+  return { url, durationMs: Math.round(durationMs), waveform, mimeType };
+}
 
 function getChannelAccess(channelId, userId, permission = 'VIEW_CHANNEL') {
   const channel = storage.getChannelById(channelId);
-  if (!channel || !userId) return { allowed: false, channel: null, server: null };
+  if (!channel || !userId) {
+    return { allowed: false, channel: channel || null, server: null, code: 'CHANNEL_NOT_FOUND' };
+  }
 
   const server = storage.getServerById(channel.serverId);
-  if (!server) return { allowed: false, channel, server: null };
+  if (!server) return { allowed: false, channel, server: null, code: 'SERVER_NOT_FOUND' };
 
   if (server.isDM) {
+    const participants = Array.isArray(server.dmUserIds) ? server.dmUserIds : [];
+    const isParticipant = participants.includes(userId);
+    const hasBlockedParticipant = participants.some(participantId => (
+      participantId !== userId && storage.isBlockedEitherDirection(userId, participantId)
+    ));
+    const blockedForAction = isParticipant && permission === 'SEND_MESSAGES' && hasBlockedParticipant;
     return {
-      allowed: Array.isArray(server.dmUserIds) && server.dmUserIds.includes(userId),
+      allowed: isParticipant && !blockedForAction,
       channel,
       server,
+      code: blockedForAction ? 'USER_BLOCKED' : 'MISSING_PERMISSION',
     };
+  }
+
+  if (messageModerationService.isUserBanned(server.id, userId)) {
+    return { allowed: false, channel, server, code: 'BANNED' };
   }
 
   const isMember = typeof storage.isServerMember === 'function'
     ? storage.isServerMember(server.id, userId)
     : (storage.serverMembers.get(server.id) || []).includes(userId);
-  if (!isMember) return { allowed: false, channel, server };
+  if (!isMember) return { allowed: false, channel, server, code: 'NOT_A_MEMBER' };
 
-  if (permission === 'SEND_MESSAGES' && typeof storage.isMemberTimedOut === 'function' && storage.isMemberTimedOut(server.id, userId)) {
-    return { allowed: false, channel, server };
+  if (permission === 'SEND_MESSAGES'
+    && server.creatorId !== userId
+    && !storage.hasPermission(server.id, userId, 'ADMINISTRATOR')
+    && !platformService.isMemberVerified(server.id, userId)) {
+    return { allowed: false, channel, server, code: 'VERIFICATION_REQUIRED' };
   }
 
-  const allowed = typeof storage.hasPermission === 'function'
-    ? storage.hasPermission(server.id, userId, permission)
-    : true;
+  if (permission === 'SEND_MESSAGES' && typeof storage.isMemberTimedOut === 'function' && storage.isMemberTimedOut(server.id, userId)) {
+    const timeoutUntil = storage.getMemberModerationState?.(server.id, userId)?.timeoutUntil || null;
+    return {
+      allowed: false,
+      channel,
+      server,
+      code: 'TIMEOUT',
+      retryAfterMs: timeoutUntil ? Math.max(0, timeoutUntil - Date.now()) : undefined,
+    };
+  }
 
-  return { allowed, channel, server };
+  const canViewChannel = messageModerationService.hasChannelPermission(channel, userId, 'VIEW_CHANNEL');
+  const allowed = canViewChannel
+    && (permission === 'VIEW_CHANNEL'
+      || messageModerationService.hasChannelPermission(channel, userId, permission));
+
+  return { allowed, channel, server, code: allowed ? null : 'MISSING_PERMISSION' };
+}
+
+function emitAccessError(socket, access, fallbackMessage) {
+  const definitions = {
+    BANNED: 'Bu sunucudan yasaklandığın için mesaj gönderemezsin.',
+    TIMEOUT: 'Bu sunucuda geçici olarak susturuldun.',
+    NOT_A_MEMBER: 'Bu sunucunun üyesi değilsin.',
+    CHANNEL_NOT_FOUND: 'Kanal bulunamadı.',
+    SERVER_NOT_FOUND: 'Sunucu bulunamadı.',
+    MISSING_PERMISSION: fallbackMessage || 'Bu işlem için gerekli yetkin yok.',
+    USER_BLOCKED: 'Engellenen bir kullanıcıyla özel mesajlaşamazsın.',
+    VERIFICATION_REQUIRED: 'Mesaj göndermeden önce sunucu kurallarını kabul etmelisin.',
+  };
+
+  socket.emit('message:error', {
+    message: definitions[access.code] || fallbackMessage || 'Bu işlem gerçekleştirilemedi.',
+    code: access.code || 'MISSING_PERMISSION',
+    retryAfterMs: access.retryAfterMs,
+  });
 }
 
 function findMessage(channelId, messageId) {
@@ -37,7 +102,34 @@ function findMessage(channelId, messageId) {
 }
 
 function emitChannelUpdate(io, channelId, eventName, payload) {
-  io.to(`channel:${channelId}`).emit(eventName, payload);
+  emitToChannelViewers(io, channelId, eventName, payload, { currentRoomOnly: true });
+}
+
+function notificationDecision(recipientId, message, server, mentioned) {
+  if (storage.isBlockedEitherDirection(recipientId, message.userId)) return { allowed: false };
+  const prefs = platformService.getNotificationPreferences(recipientId);
+  const now = Date.now();
+  if (Number(prefs.mutedUntil) > now) return { allowed: false };
+
+  if (server.isDM) {
+    const dmEnabled = prefs.dmNotifications !== false && prefs.directMessages !== false;
+    return { allowed: dmEnabled, prefs };
+  }
+
+  const serverPrefs = prefs.servers?.[server.id] || {};
+  const channelPrefs = prefs.channels?.[message.channelId] || {};
+  if (Number(serverPrefs.mutedUntil) > now || Number(channelPrefs.mutedUntil) > now) {
+    return { allowed: false };
+  }
+
+  const level = channelPrefs.level
+    || serverPrefs.level
+    || prefs.level
+    || prefs.serverMode
+    || 'all';
+  if (['none', 'nothing'].includes(level) || (level === 'mentions' && !mentioned)) return { allowed: false };
+  if (mentioned && prefs.mentions === false) return { allowed: false };
+  return { allowed: true, prefs };
 }
 
 function notifyRecipients(io, message, server, senderId) {
@@ -56,6 +148,8 @@ function notifyRecipients(io, message, server, senderId) {
       recipient?.username
       && message.content?.toLocaleLowerCase('tr-TR').includes(`@${recipient.username}`.toLocaleLowerCase('tr-TR')),
     );
+    const decision = notificationDecision(recipientId, message, server, mentioned);
+    if (!decision.allowed) return;
 
     io.to(`user:${recipientId}`).emit('notification:new', {
       id: `message-${message.id}-${recipientId}`,
@@ -65,25 +159,175 @@ function notifyRecipients(io, message, server, senderId) {
       body: body.slice(0, 180),
       timestamp: message.timestamp,
       isMention: mentioned,
+      desktop: decision.prefs?.desktop !== false,
+      sound: decision.prefs?.sound !== false,
     });
   });
+}
+
+async function forwardAnnouncement(io, message, channel) {
+  if (channel?.type !== 'announcement') return;
+  const follows = platformService.getAnnouncementFollowers(channel.id);
+  for (const follow of follows) {
+    const targetChannel = storage.getChannelById(follow.targetChannelId);
+    const targetServer = targetChannel && storage.getServerById(targetChannel.serverId);
+    if (!targetChannel || !targetServer || targetServer.isDM) continue;
+    const forwarded = await messageService.createMessage({
+      username: message.username,
+      userId: `announcement:${channel.id}`,
+      content: message.content,
+      channelId: targetChannel.id,
+      attachments: message.attachments || [],
+      voiceMessage: message.voiceMessage || null,
+    });
+    forwarded.forwardedFrom = {
+      serverId: channel.serverId,
+      channelId: channel.id,
+      messageId: message.id,
+      authorId: message.userId,
+    };
+    if (message.bot) {
+      forwarded.type = 'bot';
+      forwarded.bot = true;
+      forwarded.applicationId = message.applicationId || null;
+      forwarded.author = message.author || { id: message.userId, username: message.username, bot: true };
+    }
+    storage.saveData();
+    emitChannelUpdate(io, targetChannel.id, 'message:receive', forwarded);
+    emitToChannelViewers(io, targetChannel.id, 'platform:update', {
+      serverId: targetServer.id,
+      scope: 'announcements',
+      action: 'forwarded',
+      data: { followId: follow.id, message: forwarded },
+      timestamp: Date.now(),
+    });
+    notifyRecipients(io, forwarded, targetServer, forwarded.userId);
+  }
+}
+
+async function executeSlashCommand(io, socket, access, user, content) {
+  if (access.server.isDM || !content.startsWith('/')) return false;
+  const match = content.match(/^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i);
+  if (!match) {
+    socket.emit('message:error', { message: 'Slash komutu biçimi geçersiz.', code: 'INVALID_COMMAND' });
+    return true;
+  }
+  const [, commandName, rawArgs = ''] = match;
+  const command = platformService.getCommand(access.server.id, commandName.toLowerCase());
+  if (!command || !command.enabled) {
+    socket.emit('message:error', { message: `/${commandName} komutu bulunamadı.`, code: 'UNKNOWN_COMMAND' });
+    return true;
+  }
+  const missingPermission = (command.requiredPermissions || []).find(permission => (
+    !platformService.hasChannelPermission(access.channel.id, user.id, permission)
+  ));
+  if (missingPermission) {
+    socket.emit('message:error', {
+      message: 'Bu komutu kullanmak için gerekli yetkin yok.',
+      code: 'COMMAND_MISSING_PERMISSION',
+      permission: missingPermission,
+    });
+    return true;
+  }
+  const args = rawArgs.trim().slice(0, 1000);
+  const template = String(command.response || '').trim();
+  if (!template) {
+    socket.emit('message:error', {
+      message: `/${command.name} komutunun yanıtı henüz ayarlanmamış.`,
+      code: 'COMMAND_NO_RESPONSE',
+    });
+    return true;
+  }
+  const responseContent = template
+    .replace(/\{user\}/gi, `@${user.username}`)
+    .replace(/\{username\}/gi, user.username)
+    .replace(/\{args\}/gi, args)
+    .slice(0, 4000);
+  const response = await messageService.createMessage({
+    username: command.name,
+    userId: `command:${command.id}`,
+    content: responseContent,
+    channelId: access.channel.id,
+  });
+  response.type = 'bot';
+  response.bot = true;
+  response.applicationId = command.id;
+  response.command = {
+    name: command.name,
+    args,
+    invokedBy: user.id,
+  };
+  response.author = { id: response.userId, username: command.name, bot: true };
+  storage.saveData();
+  emitChannelUpdate(io, access.channel.id, 'message:receive', response);
+  socket.emit('message:receive', response);
+  notifyRecipients(io, response, access.server, user.id);
+  await forwardAnnouncement(io, response, access.channel);
+  emitToChannelViewers(io, access.channel.id, 'command:invoked', {
+    serverId: access.server.id,
+    channelId: access.channel.id,
+    commandId: command.id,
+    commandName: command.name,
+    userId: user.id,
+    messageId: response.id,
+    createdAt: response.timestamp,
+  });
+  platformService.recordServerStat(access.server.id, 'messagesSent');
+  return true;
 }
 
 exports.handleSend = async (io, socket, data = {}) => {
   try {
     const { content, channelId, attachments, replyTo } = data;
-    const finalUserId = socket.userData?.userId;
-    const finalUsername = socket.userData?.username;
+    const finalUserId = socket.authUser?.id;
+    const authenticatedUser = finalUserId ? storage.getUserById(finalUserId) : null;
+    const finalUsername = authenticatedUser?.username;
     const cleanContent = String(content || '').trim();
     const safeAttachments = Array.isArray(attachments)
       ? attachments.slice(0, 10).filter(file => file && typeof file.url === 'string')
       : [];
+    const voiceMessage = safeVoiceMessage(data.voiceMessage);
 
-    if ((!cleanContent && safeAttachments.length === 0) || !finalUsername || !channelId) return;
+    if (data.voiceMessage != null && !voiceMessage) {
+      socket.emit('message:error', {
+        message: 'Sesli mesaj verisi geçersiz.',
+        code: 'INVALID_VOICE_MESSAGE',
+      });
+      return;
+    }
+
+    if ((!cleanContent && safeAttachments.length === 0 && !voiceMessage) || !finalUsername || !channelId) {
+      socket.emit('message:error', {
+        message: 'Gönderilecek geçerli bir mesaj veya dosya bulunamadı.',
+        code: 'INVALID_MESSAGE',
+      });
+      return;
+    }
 
     const access = getChannelAccess(channelId, finalUserId, 'SEND_MESSAGES');
     if (!access.allowed) {
-      socket.emit('message:error', { message: 'Bu kanala mesaj gönderme yetkin yok.' });
+      emitAccessError(socket, access, 'Bu kanala mesaj gönderme yetkin yok.');
+      return;
+    }
+
+    const moderationResult = messageModerationService.inspect({
+      server: access.server,
+      channel: access.channel,
+      userId: finalUserId,
+      content: cleanContent || (safeAttachments.length ? '[attachment]' : '[voice-message]'),
+    });
+    if (moderationResult) {
+      messageModerationService.applyViolation(io, socket, {
+        server: access.server,
+        channel: access.channel,
+        userId: finalUserId,
+        username: finalUsername,
+      }, moderationResult);
+      return;
+    }
+
+    if (cleanContent.startsWith('/')
+      && await executeSlashCommand(io, socket, access, authenticatedUser, cleanContent)) {
       return;
     }
 
@@ -94,22 +338,42 @@ exports.handleSend = async (io, socket, data = {}) => {
       channelId,
       attachments: safeAttachments,
       replyTo,
+      voiceMessage,
     });
+
+    if (!access.server.isDM) {
+      messageModerationService.markMessageAccepted(
+        access.server.id,
+        channelId,
+        finalUserId,
+        message.timestamp,
+      );
+      platformService.recordServerStat(access.server.id, 'messagesSent');
+    }
 
     emitChannelUpdate(io, channelId, 'message:receive', message);
     socket.emit('message:receive', message);
     notifyRecipients(io, message, access.server, finalUserId);
+    await forwardAnnouncement(io, message, access.channel);
 
     if (access.server.isDM) {
       access.server.dmUserIds.forEach(recipientId => {
         if (recipientId !== finalUserId) {
-          io.to(`user:${recipientId}`).emit('dm:notification', { channelId, message });
+          const recipient = storage.getUserById(recipientId);
+          const mentioned = Boolean(
+            recipient?.username
+            && message.content?.toLocaleLowerCase('tr-TR')
+              .includes(`@${recipient.username}`.toLocaleLowerCase('tr-TR')),
+          );
+          if (notificationDecision(recipientId, message, access.server, mentioned).allowed) {
+            io.to(`user:${recipientId}`).emit('dm:notification', { channelId, message });
+          }
         }
       });
     }
   } catch (error) {
     console.error('Mesaj gönderilirken sunucuda hata oluştu:', error);
-    socket.emit('message:error', { message: 'Mesaj gönderilemedi.' });
+    socket.emit('message:error', { message: 'Mesaj gönderilemedi.', code: 'MESSAGE_SEND_FAILED' });
   }
 };
 
@@ -117,14 +381,56 @@ exports.handleEdit = (io, socket, data = {}) => {
   try {
     const { messageId, content, channelId } = data;
     const userId = socket.userData?.userId;
+    const cleanContent = String(content || '').trim();
     const access = getChannelAccess(channelId, userId, 'SEND_MESSAGES');
     const originalMessage = findMessage(channelId, messageId);
-    if (!access.allowed || !originalMessage || originalMessage.userId !== userId) return;
+    if (!access.allowed) {
+      emitAccessError(socket, access, 'Bu kanalda mesaj düzenleme yetkin yok.');
+      return;
+    }
+    if (!originalMessage || originalMessage.userId !== userId) {
+      socket.emit('message:error', { message: 'Düzenlenecek mesaj bulunamadı.', code: 'MESSAGE_NOT_FOUND' });
+      return;
+    }
+    if (!cleanContent && !(originalMessage.attachments || []).length) {
+      socket.emit('message:error', { message: 'Mesaj içeriği boş olamaz.', code: 'INVALID_MESSAGE' });
+      return;
+    }
 
-    const updatedMessage = messageService.updateMessageWithChannel(channelId, messageId, String(content || '').trim(), userId);
-    if (updatedMessage) emitChannelUpdate(io, channelId, 'message:update', updatedMessage);
+    const moderationResult = messageModerationService.inspect({
+      server: access.server,
+      channel: access.channel,
+      userId,
+      content: cleanContent,
+      skipRateLimits: true,
+    });
+    if (moderationResult) {
+      messageModerationService.applyViolation(io, socket, {
+        server: access.server,
+        channel: access.channel,
+        userId,
+        username: socket.userData?.username,
+      }, moderationResult);
+      return;
+    }
+
+    const updatedMessage = messageService.updateMessageWithChannel(channelId, messageId, cleanContent, userId);
+    if (updatedMessage) {
+      emitChannelUpdate(io, channelId, 'message:update', updatedMessage);
+      if (!access.server.isDM) {
+        const entry = platformService.addAuditLog(access.server.id, {
+          action: 'MESSAGE_EDIT',
+          actorId: userId,
+          targetType: 'message',
+          targetId: messageId,
+          metadata: { channelId, revisionCount: updatedMessage.editHistory?.length || 0 },
+        });
+        emitAudit(io, access.server.id, entry);
+      }
+    }
   } catch (error) {
     console.error('Mesaj düzenleme hatası:', error);
+    socket.emit('message:error', { message: 'Mesaj düzenlenemedi.', code: 'MESSAGE_EDIT_FAILED' });
   }
 };
 
@@ -140,7 +446,19 @@ exports.handleDelete = (io, socket, data = {}) => {
     if (!access.allowed || !originalMessage || !canManage) return;
 
     const removed = messageService.deleteMessageWithChannel(channelId, messageId, originalMessage.userId);
-    if (removed) emitChannelUpdate(io, channelId, 'message:delete', { messageId });
+    if (removed) {
+      emitChannelUpdate(io, channelId, 'message:delete', { messageId });
+      if (!access.server.isDM) {
+        const entry = platformService.addAuditLog(access.server.id, {
+          action: 'MESSAGE_DELETE',
+          actorId: userId,
+          targetType: 'message',
+          targetId: messageId,
+          metadata: { channelId, authorId: originalMessage.userId },
+        });
+        emitAudit(io, access.server.id, entry);
+      }
+    }
   } catch (error) {
     console.error('Mesaj silme hatası:', error);
   }

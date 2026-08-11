@@ -4,6 +4,24 @@ import toast from 'react-hot-toast';
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
 
+export async function uploadChatFile(file) {
+  if (!file) throw new Error('Dosya seçilmedi.');
+  if (file.size > 10 * 1024 * 1024) throw new Error('Dosya boyutu en fazla 10 MB olabilir.');
+
+  const formData = new FormData();
+  formData.append('file', file);
+  const token = localStorage.getItem('chat_token');
+  const response = await fetch(`${API_ORIGIN}/api/upload/file`, {
+    method: 'POST',
+    body: formData,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Dosya yüklenemedi.');
+  const type = data.mimetype?.startsWith('image/') ? 'image' : data.mimetype?.startsWith('audio/') ? 'audio' : 'file';
+  return { ...data, url: data.url?.startsWith('http') ? data.url : `${API_ORIGIN}${data.url}`, type };
+}
+
 export default function FileUpload({ onFileSelect, disabled = false }) {
   const [showMenu, setShowMenu] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -13,31 +31,10 @@ export default function FileUpload({ onFileSelect, disabled = false }) {
     e.target.value = '';
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Dosya boyutu en fazla 10 MB olabilir.');
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
     setUploading(true);
 
     try {
-      const token = localStorage.getItem('chat_token');
-      const response = await fetch(`${API_ORIGIN}/api/upload/file`, {
-        method: 'POST',
-        body: formData,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Dosya yüklenemedi.');
-
-      onFileSelect({
-        ...data,
-        url: data.url?.startsWith('http') ? data.url : `${API_ORIGIN}${data.url}`,
-        type: data.mimetype?.startsWith('image/') ? 'image' : 'file',
-      });
+      onFileSelect(await uploadChatFile(file));
       setShowMenu(false);
       toast.success('Dosya mesaja eklendi.');
     } catch (error) {

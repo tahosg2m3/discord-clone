@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Hash, Pin, Search, Users, X } from 'lucide-react';
+import { BarChart3, Bell, Hash, MessageSquare, Pin, Radio, Search, Users, X } from 'lucide-react';
 import { useServer } from '../../context/ServerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { fetchChannelMessages } from '../../services/api';
+import { fetchChannelMessages, fetchServerMembers } from '../../services/api';
 import Message from '../chat/Message';
 import MessageInput from '../chat/MessageInput';
 import TypingIndicator from '../chat/TypingIndicator';
+import PollPanel from '../chat/PollPanel';
+import ThreadPanel from '../chat/ThreadPanel';
+import AnnouncementFollowModal from '../server/AnnouncementFollowModal';
+import toast from 'react-hot-toast';
+import { getNotificationPreferences, listChannelPermissions, listCommands, listServerAssets, saveChannelNotificationPreferences } from '../../services/platformApi';
 
 function updateMessageInList(messages, update) {
   const messageId = update.messageId || update.id;
@@ -14,18 +19,28 @@ function updateMessageInList(messages, update) {
 }
 
 export default function ChatArea() {
-  const { currentChannel } = useServer();
+  const { currentChannel, currentServer } = useServer();
   const { user } = useAuth();
   const { socket } = useSocket();
   const [messages, setMessages] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
+  const [mentionSuggestions, setMentionSuggestions] = useState([]);
+  const [serverAssets, setServerAssets] = useState({ emojis: [], stickers: [], commands: [] });
   const [replyTo, setReplyTo] = useState(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [remoteSearchResults, setRemoteSearchResults] = useState([]);
   const [showPinned, setShowPinned] = useState(false);
+  const [showPolls, setShowPolls] = useState(false);
+  const [showThreads, setShowThreads] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showAnnouncementFollow, setShowAnnouncementFollow] = useState(false);
+  const [channelNotification, setChannelNotification] = useState({ level: 'all', mutedUntil: null });
+  const [effectivePermissions, setEffectivePermissions] = useState([]);
   const [firstUnreadId, setFirstUnreadId] = useState(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const [sendBlockedUntil, setSendBlockedUntil] = useState(0);
+  const [clock, setClock] = useState(Date.now());
   const messageListRef = useRef(null);
   const messagesEndRef = useRef(null);
   const typingTimersRef = useRef(new Map());
@@ -33,6 +48,101 @@ export default function ChatArea() {
   const shouldScrollToBottomRef = useRef(true);
 
   const channelId = currentChannel?.id;
+  const retrySeconds = Math.max(0, Math.ceil((sendBlockedUntil - clock) / 1000));
+  const permissionSet = useMemo(() => new Set(effectivePermissions), [effectivePermissions]);
+  const isAdministrator = permissionSet.has('ADMINISTRATOR');
+  const canSendMessages = isAdministrator || permissionSet.has('SEND_MESSAGES');
+  const canManageMessages = isAdministrator || permissionSet.has('MANAGE_MESSAGES');
+  const canCreateThreads = isAdministrator || permissionSet.has('CREATE_PUBLIC_THREADS');
+  const canSendThreadMessages = isAdministrator || permissionSet.has('SEND_MESSAGES_IN_THREADS');
+
+  const loadPermissions = useCallback(() => {
+    if (!channelId) {
+      setEffectivePermissions([]);
+      return Promise.resolve();
+    }
+    return listChannelPermissions(channelId)
+      .then(payload => setEffectivePermissions(Array.isArray(payload?.effectivePermissions) ? payload.effectivePermissions : []))
+      .catch(() => setEffectivePermissions([]));
+  }, [channelId]);
+
+  useEffect(() => { loadPermissions(); }, [loadPermissions]);
+
+  useEffect(() => {
+    if (!socket || !channelId) return undefined;
+    const update = payload => {
+      if (payload?.scope !== 'channel-permissions') return;
+      if (String(payload?.serverId || '') !== String(currentServer?.id || '')) return;
+      loadPermissions();
+    };
+    const permissionsChanged = payload => {
+      if (String(payload?.channelId || '') === String(channelId)) loadPermissions();
+    };
+    socket.on('platform:update', update);
+    socket.on('channel:permissions-changed', permissionsChanged);
+    return () => {
+      socket.off('platform:update', update);
+      socket.off('channel:permissions-changed', permissionsChanged);
+    };
+  }, [channelId, currentServer?.id, loadPermissions, socket]);
+
+  useEffect(() => {
+    if (!sendBlockedUntil) return undefined;
+    const timer = window.setInterval(() => setClock(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [sendBlockedUntil]);
+
+  useEffect(() => {
+    if (!currentServer?.id) {
+      setMentionSuggestions([]);
+      return;
+    }
+    fetchServerMembers(currentServer.id)
+      .then(payload => setMentionSuggestions(Array.isArray(payload) ? payload : payload.members || []))
+      .catch(() => setMentionSuggestions([]));
+  }, [currentServer?.id]);
+
+  useEffect(() => {
+    if (!channelId) return;
+    getNotificationPreferences()
+      .then(payload => setChannelNotification({ level: 'all', mutedUntil: null, ...(payload.channels?.[channelId] || {}) }))
+      .catch(() => setChannelNotification({ level: 'all', mutedUntil: null }));
+  }, [channelId]);
+
+  const saveChannelNotifications = async (updates) => {
+    const next = { ...channelNotification, ...updates };
+    try {
+      const saved = await saveChannelNotificationPreferences(channelId, next);
+      setChannelNotification(saved || next);
+      toast.success('Kanal bildirimleri güncellendi.');
+    } catch (error) { toast.error(error.message); }
+  };
+
+  const loadServerAssets = useCallback(() => {
+    if (!currentServer?.id) {
+      setServerAssets({ emojis: [], stickers: [], commands: [] });
+      return Promise.resolve();
+    }
+    return Promise.all([listServerAssets(currentServer.id, 'emojis'), listServerAssets(currentServer.id, 'stickers'), listCommands(currentServer.id)])
+      .then(([emojis, stickers, commands]) => setServerAssets({
+        emojis: Array.isArray(emojis) ? emojis : emojis.emojis || emojis.items || [],
+        stickers: Array.isArray(stickers) ? stickers : stickers.stickers || stickers.items || [],
+        commands: Array.isArray(commands) ? commands : commands.commands || [],
+      }))
+      .catch(() => setServerAssets({ emojis: [], stickers: [], commands: [] }));
+  }, [currentServer?.id]);
+
+  useEffect(() => { loadServerAssets(); }, [loadServerAssets]);
+
+  useEffect(() => {
+    if (!socket || !currentServer?.id) return undefined;
+    const update = payload => {
+      if (String(payload?.serverId || '') !== String(currentServer.id)) return;
+      if (['emojis', 'stickers', 'commands'].includes(payload?.scope)) loadServerAssets();
+    };
+    socket.on('platform:update', update);
+    return () => socket.off('platform:update', update);
+  }, [currentServer?.id, loadServerAssets, socket]);
 
   const markChannelRead = useCallback(() => {
     if (!channelId || !user?.id) return;
@@ -52,6 +162,11 @@ export default function ChatArea() {
     setMessages([]);
     setTypingUsers([]);
     setReplyTo(null);
+    setShowPinned(false);
+    setShowPolls(false);
+    setShowThreads(false);
+    setShowNotifications(false);
+    setShowAnnouncementFollow(false);
     setSearchQuery('');
     setRemoteSearchResults([]);
     setFirstUnreadId(null);
@@ -133,6 +248,15 @@ export default function ChatArea() {
       setRemoteSearchResults(Array.isArray(payload) ? payload : payload?.messages || payload?.results || []);
     };
 
+    const handleMessageError = (payload = {}) => {
+      if (payload.channelId && payload.channelId !== channelId) return;
+      if (payload.retryAfterMs) {
+        setSendBlockedUntil(Date.now() + Number(payload.retryAfterMs));
+        setClock(Date.now());
+      }
+      toast.error(payload.message || 'Mesaj gönderilemedi.');
+    };
+
     socket.on('message:receive', handleReceive);
     socket.on('message:update', handleUpdate);
     socket.on('message:delete', handleDelete);
@@ -141,6 +265,7 @@ export default function ChatArea() {
     socket.on('message:reaction:update', handleReactionUpdate);
     socket.on('message:pin:update', handlePinUpdate);
     socket.on('message:search:results', handleSearchResults);
+    socket.on('message:error', handleMessageError);
 
     return () => {
       socket.emit('user:leave', { channelId });
@@ -152,6 +277,7 @@ export default function ChatArea() {
       socket.off('message:reaction:update', handleReactionUpdate);
       socket.off('message:pin:update', handlePinUpdate);
       socket.off('message:search:results', handleSearchResults);
+      socket.off('message:error', handleMessageError);
       typingTimersRef.current.forEach((timer) => clearTimeout(timer));
       typingTimersRef.current.clear();
     };
@@ -204,7 +330,7 @@ export default function ChatArea() {
   };
 
   const handleSendMessage = (payload) => {
-    if (!channelId || !socket || !user) return;
+    if (!channelId || !socket || !user || !canSendMessages) return;
     const messagePayload = typeof payload === 'string' ? { content: payload, attachments: [], replyTo: null } : payload;
     if (!messagePayload.content?.trim() && !(messagePayload.attachments || []).length) return;
 
@@ -217,14 +343,20 @@ export default function ChatArea() {
       username: user.username,
     });
     socket.emit('typing:stop', { channelId });
+    if (currentChannel?.slowmodeSeconds) {
+      setSendBlockedUntil(Date.now() + Number(currentChannel.slowmodeSeconds) * 1000);
+      setClock(Date.now());
+    }
     shouldScrollToBottomRef.current = true;
   };
 
   const handleReaction = (message, emoji) => {
+    if (!canSendMessages) return;
     socket?.emit('message:reaction:toggle', { channelId, messageId: message.id, emoji, userId: user.id });
   };
 
   const handlePin = (message) => {
+    if (!canManageMessages) return;
     socket?.emit('message:pin:toggle', { channelId, messageId: message.id, userId: user.id });
   };
 
@@ -234,7 +366,7 @@ export default function ChatArea() {
     <div className="relative z-10 flex h-full min-w-0 flex-1 flex-col bg-[#111827]">
       <div className="z-20 flex h-14 shrink-0 items-center border-b border-white/[0.06] bg-[#111827]/90 px-5 backdrop-blur">
         <div className="mr-2.5 flex items-center text-[#60a5fa]"><Hash className="h-5 w-5" /></div>
-        <div className="font-semibold text-[#f8fafc]">{currentChannel.name}</div>
+        <div className="min-w-0"><div className="font-semibold text-[#f8fafc]">{currentChannel.name}</div>{currentChannel.topic && <div className="max-w-[420px] truncate text-[10px] text-[#64748b]">{currentChannel.topic}</div>}</div>
 
         <div className="ml-auto flex items-center gap-2 text-[#94a3b8]">
           {isSearchOpen ? (
@@ -247,6 +379,10 @@ export default function ChatArea() {
             <button type="button" onClick={() => setIsSearchOpen(true)} className="rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc]" title="Mesajlarda ara" aria-label="Mesajlarda ara"><Search className="h-5 w-5" /></button>
           )}
           <button type="button" onClick={() => setShowPinned((show) => !show)} className={`rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showPinned ? 'text-[#fbbf24]' : ''}`} title="Sabitlenmiş mesajlar" aria-label="Sabitlenmiş mesajlar"><Pin className="h-5 w-5" /></button>
+          <button type="button" onClick={() => setShowPolls(show => !show)} className={`rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showPolls ? 'text-[#60a5fa]' : ''}`} title="Anketler" aria-label="Anketler"><BarChart3 className="h-5 w-5" /></button>
+          <button type="button" onClick={() => setShowThreads(show => !show)} className={`rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showThreads ? 'text-[#60a5fa]' : ''}`} title="Mesaj dizileri" aria-label="Mesaj dizileri"><MessageSquare className="h-5 w-5" /></button>
+          {currentChannel.type === 'announcement' && <button type="button" onClick={() => setShowAnnouncementFollow(true)} className="rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#60a5fa]" title="Duyuru kanalını takip et" aria-label="Duyuru kanalını takip et"><Radio className="h-5 w-5" /></button>}
+          <button type="button" onClick={() => setShowNotifications(show => !show)} className={`rounded-lg p-2 transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showNotifications ? 'text-[#60a5fa]' : ''}`} title="Kanal bildirimleri" aria-label="Kanal bildirimleri"><Bell className="h-5 w-5" /></button>
           <Users className="h-5 w-5 cursor-pointer transition-colors hover:text-[#f8fafc]" title="Üye listesi" />
         </div>
       </div>
@@ -257,6 +393,17 @@ export default function ChatArea() {
           <div className="custom-scrollbar max-h-72 overflow-y-auto p-2">
             {pinnedMessages.length === 0 ? <p className="p-3 text-sm text-[#94a3b8]">Bu kanalda sabitlenmiş mesaj yok.</p> : pinnedMessages.map((message) => <button key={message.id} type="button" onClick={() => { setShowPinned(false); document.getElementById(`message-${message.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }} className="block w-full rounded-lg px-2 py-2 text-left hover:bg-white/[0.06]"><span className="mr-2 text-xs font-semibold text-[#93c5fd]">{message.username}</span><span className="text-sm text-[#cbd5e1]">{message.content || 'Ekli mesaj'}</span></button>)}
           </div>
+        </div>
+      )}
+
+      {showPolls && <PollPanel key={channelId} channelId={channelId} userId={user?.id} canSendMessages={canSendMessages} onClose={() => setShowPolls(false)} />}
+      {showThreads && <ThreadPanel key={channelId} channelId={channelId} canCreateThread={canCreateThreads} canSendThreadMessages={canSendThreadMessages} onClose={() => setShowThreads(false)} />}
+      {showAnnouncementFollow && <AnnouncementFollowModal channel={currentChannel} onClose={() => setShowAnnouncementFollow(false)} />}
+      {showNotifications && (
+        <div className="absolute right-5 top-16 z-50 w-72 rounded-xl border border-white/[0.1] bg-[#1e293b] p-3 shadow-2xl shadow-black/40">
+          <div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-bold text-white">Kanal bildirimleri</p><p className="text-[11px] text-[#64748b]">Yalnızca #{currentChannel.name}</p></div><button type="button" onClick={() => setShowNotifications(false)} className="rounded p-1 text-[#94a3b8] hover:bg-white/[0.08]"><X className="h-4 w-4" /></button></div>
+          <div className="space-y-1">{[['all', 'Tüm mesajlar'], ['mentions', 'Yalnızca etiketler'], ['nothing', 'Hiçbiri']].map(([value, label]) => <button key={value} type="button" onClick={() => saveChannelNotifications({ level: value })} className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${channelNotification.level === value ? 'bg-[#2563eb] text-white' : 'text-[#cbd5e1] hover:bg-white/[0.06]'}`}><span>{label}</span>{channelNotification.level === value && <span>✓</span>}</button>)}</div>
+          <div className="mt-3 border-t border-white/[0.08] pt-3"><p className="mb-2 text-[10px] font-bold uppercase text-[#64748b]">Kanalı sessize al</p><div className="grid grid-cols-2 gap-1"><button type="button" onClick={() => saveChannelNotifications({ mutedUntil: Date.now() + 60 * 60 * 1000 })} className="rounded-lg bg-white/[0.05] px-2 py-2 text-xs text-[#cbd5e1] hover:bg-white/[0.09]">1 saat</button><button type="button" onClick={() => saveChannelNotifications({ mutedUntil: Date.now() + 8 * 60 * 60 * 1000 })} className="rounded-lg bg-white/[0.05] px-2 py-2 text-xs text-[#cbd5e1] hover:bg-white/[0.09]">8 saat</button><button type="button" onClick={() => saveChannelNotifications({ mutedUntil: 4102444800000 })} className="rounded-lg bg-white/[0.05] px-2 py-2 text-xs text-[#cbd5e1] hover:bg-white/[0.09]">Süresiz</button><button type="button" onClick={() => saveChannelNotifications({ mutedUntil: null })} className="rounded-lg bg-white/[0.05] px-2 py-2 text-xs text-[#cbd5e1] hover:bg-white/[0.09]">Sesi aç</button></div></div>
         </div>
       )}
 
@@ -275,7 +422,7 @@ export default function ChatArea() {
           return (
             <div id={`message-${message.id}`} key={message.id}>
               {firstUnreadId === message.id && !searchQuery.trim() && <div className="my-3 flex items-center gap-2 text-xs font-semibold text-[#f87171]"><div className="h-px flex-1 bg-[#ef4444]/70" /><span>Yeni mesajlar</span><div className="h-px flex-1 bg-[#ef4444]/70" /></div>}
-              <Message message={message} isOwn={message.userId === user.id} grouped={grouped} userId={user.id} currentUsername={user.username} onReply={setReplyTo} onReaction={handleReaction} onPin={handlePin} />
+              <Message message={message} isOwn={message.userId === user.id} grouped={grouped} userId={user.id} currentUsername={user.username} canManageMessages={canManageMessages} onReply={setReplyTo} onReaction={handleReaction} onPin={handlePin} />
             </div>
           );
         })}
@@ -288,14 +435,20 @@ export default function ChatArea() {
 
       <div className="shrink-0 px-5 pb-2 pt-1"><TypingIndicator users={typingUsers} /></div>
       <div className="shrink-0 px-5 pb-5 pt-2">
-        <MessageInput
-          onSendMessage={handleSendMessage}
+          <MessageInput
+            onSendMessage={handleSendMessage}
           onTypingStart={() => socket?.emit('typing:start', { channelId })}
           onTypingStop={() => socket?.emit('typing:stop', { channelId })}
           replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
-          placeholder={`#${currentChannel.name} kanalına mesaj gönder`}
-        />
+            onCancelReply={() => setReplyTo(null)}
+            draftKey={`channel:${channelId}:${user?.id || 'guest'}`}
+            mentionSuggestions={mentionSuggestions}
+            serverEmojis={serverAssets.emojis}
+            serverStickers={serverAssets.stickers}
+            commandSuggestions={serverAssets.commands}
+            disabled={retrySeconds > 0 || !canSendMessages}
+            placeholder={!canSendMessages ? 'Bu kanala mesaj gönderme yetkin yok' : retrySeconds > 0 ? `Yavaş mod: ${retrySeconds} saniye bekle` : `#${currentChannel.name} kanalına mesaj gönder`}
+          />
       </div>
     </div>
   );

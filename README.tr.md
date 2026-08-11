@@ -1,53 +1,124 @@
+# Discord Clone
+
 <p align="right">
-🌍 Dil:
-<a href="README.md">English</a> |
-<a href="README.tr.md">Türkçe</a>
+  Dil: <a href="README.md">English</a> · <a href="README.tr.md">Türkçe</a>
 </p>
-Özellikler✅ Gerçek zamanlı mesajlaşma (Socket.io)✅ WebRTC ile ses kanalları✅ Ekran paylaşımı✅ GIF desteği (Tenor API)✅ Kullanıcı kimlik doğrulaması (JWT)✅ Çoklu sunucu ve kanal✅ Masaüstü uygulaması (Electron - Windows/Mac/Linux)✅ Web uygulaması✅ Yazıyor göstergeleri✅ Çevrimiçi kullanıcı listesiTeknoloji YığınıFrontend: React, Vite, Tailwind CSS, Socket.io-client, PeerJSBackend: Node.js, Express, Socket.io, JWT, bcryptMasaüstü: ElectronVeritabanı: Bellek içi (In-memory) (MongoDB hazır)🚀 Geliştirme Kurulumu1. Depoyu KlonlayınBashgit clone https://github.com/tahosg2m3/discord-clone.git
+
+Discord'dan esinlenen, tam kapsamlı ve gerçek zamanlı bir topluluk sohbet uygulamasıdır. Güvenli e-posta doğrulaması, kalıcı sunucu ve konuşmalar, ayrıntılı rol sistemi, moderasyon, sesli/görüntülü iletişim, topluluk araçları ve Electron masaüstü istemcisi içerir.
+
+> Bu bağımsız eğitim projesinin Discord Inc. ile bağlantısı yoktur ve Discord Inc. tarafından desteklenmez. Discord, Discord Inc.'in ticari markasıdır.
+
+## Öne çıkan özellikler
+
+- Kayıt ve giriş sırasında e-posta kodu doğrulaması, şifre sıfırlama, e-posta değiştirme onayı, JWT oturumları ve bcrypt şifreleme
+- Gerçek zamanlı sunucu kanalları, özel mesajlar, grup mesajları, yazıyor göstergesi, çevrimiçi durumu, yanıt, tepki, sabitleme, arama, dosya, GIF, sesli mesaj, düzenleme geçmişi, taslak ve okunmamış mesaj takibi
+- Mikrofon/sağırlaştırma kontrolleri, kamera, ekran paylaşımı, bas-konuş, giriş/çıkış cihaz ayarları, konuşan kişi çerçevesi, yeniden bağlanma, sahne kanalları ve ses tahtası
+- Sunucu sahipliği, sıralanabilir roller, ayrıntılı yetkiler, kanal bazlı yetki geçersiz kılma, takma ad, sunucu profili, atma, yasaklama, zaman aşımı, susturma/sağırlaştırma/bağlantı kesme ve denetim kayıtları
+- Kategori; metin, ses, sahne, duyuru ve forum kanalları; başlıklar, etiketler, anketler, yavaş mod, NSFW onayı, geçici ses kanalları ve geri alınabilir kanal çöp kutusu
+- Davet bağlantıları, üyelik taraması, onboarding soruları, sunucu keşfi, sunucu şablonları, planlı etkinlikler ve katılım yanıtları
+- Spam, yasaklı kelime, bağlantı, davet, aşırı büyük harf ve etiket için AutoMod; kullanıcı/mesaj raporlama ve engelleme listesi
+- Webhook, özel slash komutları ve kalıcı bot yanıtları, özel emoji/sticker, duyuru takibi, bildirim tercihleri, istatistik, dışa aktarma ve yedekleme
+- SQLite kalıcılığı, ilk çalıştırmada JSON aktarımı ve Electron'a uygun uygulama veri klasörü
+- Açık, koyu ve gece temaları; biyografi, banner, özel durum ve görünürlük tercihleri
+- Web istemcisi ile Windows, macOS ve Linux için Electron paketi
+
+## Kullanılan teknolojiler
+
+- Frontend: React 18, Vite 8, Tailwind CSS, Socket.IO Client, PeerJS
+- Backend: Node.js, Express, Socket.IO, PeerJS Server, JWT, bcrypt, Nodemailer
+- Veri: `better-sqlite3` ile SQLite
+- Masaüstü: Electron
+
+## Gereksinimler
+
+- Node.js 20.19 veya üzeri (Node.js 22 LTS önerilir)
+- npm
+- Zorunlu e-posta doğrulaması için bir SMTP hesabı
+- Ses özellikleri için mikrofon/kamera izni verebilen tarayıcı veya işletim sistemi
+
+## Geliştirme kurulumu
+
+```bash
+git clone https://github.com/tahosg2m3/discord-clone.git
 cd discord-clone
-2. Bağımlılıkları YükleyinBashnpm install
-3. Ortam Değişkenlerini Ayarlayınbackend/.envPORT=3001
+npm install
+```
+
+`backend/.env.example` dosyasını `backend/.env` olarak kopyalayın ve kendi gizli bilgilerinizi yazın:
+
+```env
+PORT=3001
 CLIENT_URL=http://localhost:5173
-JWT_SECRET=your-super-secret-jwt-key-change-this
 NODE_ENV=development
-4. Geliştirme Sunucularını ÇalıştırınSeçenek A: Hepsi bir aradaBashnpm run dev
-Seçenek B: Ayrı terminallerBash# Terminal 1 - Backend
-cd backend
-npm run dev
+JWT_SECRET=uzun-ve-rastgele-bir-deger-yazin
 
-# Terminal 2 - Frontend
-cd frontend
-npm run dev
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=epostaniz@example.com
+SMTP_PASS=uygulama-sifreniz
+MAIL_FROM="Discord Clone <epostaniz@example.com>"
+```
 
-# Terminal 3 - Electron (frontend başladıktan sonra)
+Gmail kullanıyorsanız normal hesap şifresi yerine Uygulama Şifresi kullanın. `backend/.env`, `runtime.env`, veritabanları, yüklenen dosyalar ve oluşturulan gizli anahtarları GitHub'a göndermeyin.
+
+Tüm geliştirme servislerini başlatın:
+
+```bash
+npm run dev
+```
+
+Frontend `http://localhost:5173`, API/Socket.IO sunucusu `http://localhost:3001`, uygulamayla gelen PeerJS sinyal sunucusu ise varsayılan olarak `9000` portunda çalışır.
+
+Servisleri ayrı ayrı çalıştırmak için:
+
+```bash
+npm run dev:backend
+npm run dev:frontend
 npm run dev:electron
-5. Uygulamaya ErişimWeb: http://localhost:5173Masaüstü: Electron penceresi otomatik olarak açılacaktır📦 Prodüksiyon (Canlı) İçin DerlemeWeb UygulamasıBashcd frontend
-npm run build
-Masaüstü UygulamasıWindows:Bashnpm run build
-# Çıktı: release/Discord Clone Setup.exe
-macOS:Bashnpm run build
-# Çıktı: release/Discord Clone.dmg
-Linux:Bashnpm run build
-# Çıktı: release/Discord Clone.AppImage
-🎮 Kullanım1. Hesap OluşturmaUygulamayı açın"Sign Up" (Kayıt Ol) butonuna tıklayınKullanıcı adı, e-posta ve şifre girin"Create Account" (Hesap Oluştur) butonuna tıklayın2. Sunucuya KatılmaVarsayılan sunucu solda görünürSunucu simgesine tıklayınBir kanal seçin3. Yazılı SohbetGiriş kutusuna mesaj yazınGöndermek için Enter'a basınGIF göndermek için GIF butonuna tıklayın4. Sesli SohbetBir ses kanalına tıklayınKatılmak için mikrofon butonuna tıklayınKontroller: Sustur, Sağırlaştır, Ekran Paylaş, Ayrıl5. Sunucu OluşturmaSol kenar çubuğundaki "+" butonuna tıklayınSunucu adını girinYeni sunucu görünecektir🔧 YapılandırmaBackend Portubackend/.env dosyasında değiştirin:PORT=3001
-Frontend Portufrontend/vite.config.js dosyasında değiştirin:JavaScriptexport default defineConfig({
-  server: {
-    port: 5173,
-  },
-})
-PeerJS SunucusuSes/video için PeerJS sunucusunu çalıştırın:Bashnpm install -g peer
-peerjs --port 9000
-Veya VoiceContext.jsx içinde genel PeerJS bulut sunucusunu kullanın:JavaScriptconst newPeer = new Peer(user.id, {
-  host: '0.peerjs.com',
-  port: 443,
-  secure: true,
-});
-🐛 Sorun Giderme"Cannot find module 'bcrypt'"Bashcd backend
-npm install bcrypt jsonwebtoken
-Ses çalışmıyorPeerJS sunucusunun çalıştığını kontrol edinMikrofon izinlerini kontrol edinHatalar için tarayıcı konsolunu kontrol edinElectron uygulaması başlamıyorBashnpm install electron electron-builder --save-dev
-Port zaten kullanımdaBash# 3001 portundaki işlemi sonlandır
-lsof -ti:3001 | xargs kill -9
+```
 
-# 5173 portundaki işlemi sonlandır
-lsof -ti:5173 | xargs kill -9
-📱 Platform DesteğiPlatformDurumFormatWindows✅.exe yükleyicimacOS✅.dmgLinux✅.AppImage, .debWeb✅Tarayıcı🔐 Güvenlik Notları⚠️ ÖNEMLİ: Bu bir geliştirme kurulumudur. Prodüksiyon için:.env içindeki JWT_SECRET değerini değiştirinHTTPS kullanınHız sınırlaması (rate limiting) ekleyinUygun bir veritabanı kullanın (MongoDB)Tüm girdileri doğrulayınOrtam değişkenlerini kullanınCORS'u yalnızca kendi alan adınız için etkinleştirinŞifreleri uygun şekilde hash'leyin (bcrypt ile zaten yapıldı)📄 LisansMIT Lisansı - Öğrenme ve kişisel projeler için kullanmaktan çekinmeyin
+## İsteğe bağlı frontend ortam ayarları
+
+Servisler localhost dışında çalışacaksa `frontend/.env.local` oluşturun:
+
+```env
+VITE_API_URL=https://ornek.com/api
+VITE_API_ORIGIN=https://ornek.com
+VITE_SOCKET_URL=https://ornek.com
+VITE_PEER_HOST=peer.ornek.com
+VITE_PEER_PORT=443
+VITE_PEER_PATH=/peerjs
+VITE_PEER_SECURE=true
+VITE_TENOR_API_KEY=tenor-api-anahtariniz
+```
+
+## Derleme
+
+```bash
+# Web üretim paketi
+npm run build:frontend
+
+# Kullanılan işletim sistemi için Electron kurulum/paket dosyası
+npm run build:electron
+
+# İkisi birlikte
+npm run build
+```
+
+Electron çıktıları `release/` klasörüne yazılır.
+
+Paketlenmiş masaüstü kurulumunda, uygulama veri klasöründeki `runtime.env.example` dosyasını `runtime.env` adıyla kopyalayıp gerçek SMTP bilgilerini girin. Uygulama SQLite verisini, yüklemeleri ve otomatik ürettiği JWT anahtarını işletim sisteminin uygulama veri klasöründe saklar.
+
+## Güvenlik
+
+- Yayın sırasında npm bağımlılık listelerinde bilinen güvenlik açığı bırakılmaması hedeflenir.
+- REST ve Socket.IO işlemlerinde kullanıcı kimliği doğrulanmış JWT'den alınır; istemcinin gönderdiği kullanıcı kimliğine güvenilmez.
+- Sunucu, kanal, mesaj, ses, moderasyon, yükleme ve yönetim işlemlerinde üyelik/yetki backend tarafında kontrol edilir.
+- Gizli bilgiler ve yerel kullanıcı verileri `.gitignore` ile Git dışında tutulur.
+
+Uygulamayı internete açarken ayrıca HTTPS/WSS, reverse proxy, yalnızca gerçek alan adını kabul eden CORS, hız sınırlaması, izleme, düzenli yedek ve güvenli sır yönetimi kullanın. Güvenlik bildirimi için [SECURITY.md](SECURITY.md) dosyasına bakın.
+
+## Lisans ve sorumluluk reddi
+
+Bu depo eğitim ve portföy amacıyla, olduğu haliyle sunulur. Garanti veya destek yükümlülüğü yoktur. Yeniden dağıtım ya da ticari kullanım öncesinde depo lisansını ve üçüncü taraf lisanslarını inceleyin.

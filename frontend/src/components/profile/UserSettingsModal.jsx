@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, Lock, Mail, RotateCcw, Shield, X } from 'lucide-react';
+import { ArrowLeft, Bell, Check, Globe2, Lock, Mail, Palette, RotateCcw, Shield, UserX, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { getColorForString } from '../../utils/colors';
+import { useSocket } from '../../context/SocketContext';
+import { getNotificationPreferences, listBlockedUsers, platformRequest, saveNotificationPreferences, unblockUser } from '../../services/platformApi';
 
-const API_URL = 'http://localhost:3001/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 async function authenticatedRequest(endpoint, options = {}) {
   const response = await fetch(`${API_URL}${endpoint}`, {
@@ -23,9 +25,18 @@ async function authenticatedRequest(endpoint, options = {}) {
 
 export default function UserSettingsModal({ onClose }) {
   const { user, updateUserData } = useAuth();
+  const { socket } = useSocket();
   const initialAvatar = user.avatar && !user.avatar.includes('ui-avatars') ? user.avatar : '';
   const [username, setUsername] = useState(user.username || '');
   const [avatarUrl, setAvatarUrl] = useState(initialAvatar);
+  const [banner, setBanner] = useState(user.banner || '');
+  const [bio, setBio] = useState(user.bio || '');
+  const [customStatus, setCustomStatus] = useState(user.customStatus || '');
+  const [presenceStatus, setPresenceStatus] = useState(user.presenceStatus || user.status || 'online');
+  const [locale, setLocale] = useState(user.locale || localStorage.getItem('chat:locale') || 'tr');
+  const [theme, setTheme] = useState(user.theme || localStorage.getItem('chat:theme') || 'dark');
+  const [notificationPrefs, setNotificationPrefs] = useState({ desktop: true, mentions: true, directMessages: true, sound: true, serverMode: 'mentions' });
+  const [blockedUsers, setBlockedUsers] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [newEmail, setNewEmail] = useState(user.email || '');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -37,6 +48,25 @@ export default function UserSettingsModal({ onClose }) {
   const initial = (username || user.username || '?').slice(0, 1).toUpperCase();
   const isVerifyingEmail = Boolean(emailChangeTicket);
 
+  useEffect(() => {
+    getNotificationPreferences()
+      .then(payload => setNotificationPrefs(current => ({ ...current, ...(payload.preferences || payload) })))
+      .catch(() => {});
+    listBlockedUsers()
+      .then(payload => setBlockedUsers(payload.users || payload.blockedUsers || []))
+      .catch(() => {});
+  }, []);
+
+  const handleUnblock = async (targetUserId) => {
+    try {
+      await unblockUser(targetUserId);
+      setBlockedUsers(current => current.filter(item => (item.user?.id || item.id || item.userId) !== targetUserId));
+      toast.success('Kullanıcının engeli kaldırıldı.');
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (!username.trim()) {
       toast.error('Kullanıcı adı boş olamaz.');
@@ -45,11 +75,26 @@ export default function UserSettingsModal({ onClose }) {
 
     setIsSaving(true);
     try {
-      const updatedUser = await authenticatedRequest(`/auth/${user.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ username: username.trim(), avatar: avatarUrl.trim() }),
+      const result = await platformRequest('/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          username: username.trim(),
+          avatar: avatarUrl.trim(),
+          banner: banner.trim(),
+          bio: bio.trim(),
+          customStatus: customStatus.trim(),
+          presenceStatus,
+          locale,
+          theme,
+        }),
       });
+      const updatedUser = result.user || result;
       updateUserData(updatedUser);
+      localStorage.setItem('chat:locale', locale);
+      localStorage.setItem('chat:theme', theme);
+      document.documentElement.lang = locale;
+      document.documentElement.dataset.theme = theme;
+      socket?.emit('status:change', { status: presenceStatus, customStatus: customStatus.trim() });
       toast.success('Profilin güncellendi.');
     } catch (error) {
       toast.error(error.message || 'Profil güncellenirken bir hata oluştu.');
@@ -160,11 +205,52 @@ export default function UserSettingsModal({ onClose }) {
                 <input value={username} onChange={(event) => setUsername(event.target.value)} maxLength={50} className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none transition focus:border-[#00A8FC]" />
               </label>
               <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Profil afişi bağlantısı</span>
+                <input value={banner} onChange={(event) => setBanner(event.target.value)} placeholder="https://ornek.com/banner.jpg" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none transition placeholder:text-[#5C5E66] focus:border-[#00A8FC]" />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Hakkımda</span>
+                <textarea rows="4" value={bio} onChange={(event) => setBio(event.target.value.slice(0, 300))} placeholder="Kendinden bahset" className="w-full resize-none rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none transition placeholder:text-[#5C5E66] focus:border-[#00A8FC]" />
+                <span className="mt-1 block text-right text-[10px] text-[#72767D]">{bio.length}/300</span>
+              </label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Özel durum</span><input value={customStatus} onChange={(event) => setCustomStatus(event.target.value.slice(0, 128))} placeholder="Şu anda ne yapıyorsun?" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]" /></label>
+                <label className="block"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Çevrimiçi durumu</span><select value={presenceStatus} onChange={(event) => setPresenceStatus(event.target.value)} className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]"><option value="online">Çevrimiçi</option><option value="idle">Boşta</option><option value="dnd">Rahatsız etmeyin</option><option value="invisible">Görünmez</option></select></label>
+              </div>
+              <label className="block">
                 <span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Profil resmi bağlantısı</span>
                 <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://ornek.com/resim.jpg" className="w-full rounded-[3px] border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none transition placeholder:text-[#5C5E66] focus:border-[#00A8FC]" />
                 <span className="mt-2 block text-xs leading-5 text-[#949BA4]">İstersen internetteki bir resmin URL’sini yapıştırabilirsin.</span>
               </label>
               <div className="flex justify-end"><button type="button" onClick={handleSaveProfile} disabled={isSaving} className="rounded bg-[#5865F2] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4752C4] disabled:cursor-not-allowed disabled:opacity-50">{isSaving ? 'Kaydediliyor…' : 'Profili Kaydet'}</button></div>
+            </div>
+          </section>
+
+          <section className="mt-6 rounded-lg border border-[#1E1F22] bg-[#2B2D31] p-5">
+            <div className="flex items-start gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#5865F2]/15 text-[#8EA1E1]"><Bell className="h-4 w-4" /></span><div><h3 className="text-sm font-bold uppercase tracking-wide text-[#F2F3F5]">Bildirimler</h3><p className="mt-1 text-xs text-[#949BA4]">Nerede ve hangi bildirimleri alacağını seç.</p></div></div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              {[['desktop', 'Masaüstü bildirimi'], ['mentions', '@Etiket bildirimleri'], ['directMessages', 'DM bildirimleri'], ['sound', 'Bildirim sesi']].map(([key, label]) => <label key={key} className="flex items-center justify-between rounded-lg bg-[#1E1F22] px-3 py-2.5 text-sm text-[#B5BAC1]"><span>{label}</span><input type="checkbox" checked={Boolean(notificationPrefs[key])} onChange={(event) => setNotificationPrefs(current => ({ ...current, [key]: event.target.checked }))} /></label>)}
+              <label className="sm:col-span-2"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Varsayılan sunucu bildirimi</span><select value={notificationPrefs.serverMode} onChange={(event) => setNotificationPrefs(current => ({ ...current, serverMode: event.target.value }))} className="w-full rounded-[3px] bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none"><option value="all">Tüm mesajlar</option><option value="mentions">Sadece etiketler</option><option value="nothing">Sessiz</option></select></label>
+            </div>
+            <div className="mt-4 flex justify-end"><button type="button" onClick={() => saveNotificationPreferences(notificationPrefs).then(() => toast.success('Bildirim ayarları kaydedildi.')).catch(error => toast.error(error.message))} className="rounded bg-[#5865F2] px-4 py-2 text-sm font-medium text-white hover:bg-[#4752C4]">Bildirimleri Kaydet</button></div>
+          </section>
+
+          <section className="mt-6 rounded-lg border border-[#1E1F22] bg-[#2B2D31] p-5">
+            <div className="flex items-start gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#5865F2]/15 text-[#8EA1E1]"><Globe2 className="h-4 w-4" /></span><div><h3 className="text-sm font-bold uppercase tracking-wide text-[#F2F3F5]">Dil ve Görünüm</h3><p className="mt-1 text-xs text-[#949BA4]">Arayüz tercihin bu cihazda da saklanır.</p></div></div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2"><label><span className="mb-2 flex items-center gap-1 text-xs font-bold uppercase text-[#B5BAC1]"><Globe2 className="h-3.5 w-3.5" /> Dil</span><select value={locale} onChange={(event) => setLocale(event.target.value)} className="w-full rounded-[3px] bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none"><option value="tr">Türkçe</option><option value="en">English</option></select></label><label><span className="mb-2 flex items-center gap-1 text-xs font-bold uppercase text-[#B5BAC1]"><Palette className="h-3.5 w-3.5" /> Tema</span><select value={theme} onChange={(event) => setTheme(event.target.value)} className="w-full rounded-[3px] bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none"><option value="dark">Koyu</option><option value="midnight">Gece mavisi</option><option value="light">Açık</option></select></label></div>
+          </section>
+
+          <section className="mt-6 rounded-lg border border-[#1E1F22] bg-[#2B2D31] p-5">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#DA373C]/15 text-[#f87171]"><UserX className="h-4 w-4" /></span>
+              <div><h3 className="text-sm font-bold uppercase tracking-wide text-[#F2F3F5]">Engellenen kullanıcılar</h3><p className="mt-1 text-xs text-[#949BA4]">Engellediğin kişiler sana DM gönderemez.</p></div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {blockedUsers.length === 0 ? <p className="rounded-lg bg-[#1E1F22] p-3 text-sm text-[#949BA4]">Engellediğin kullanıcı yok.</p> : blockedUsers.map((entry) => {
+                const blocked = entry.user || entry;
+                const targetId = blocked.id || entry.userId;
+                return <div key={targetId} className="flex items-center gap-3 rounded-lg bg-[#1E1F22] px-3 py-2.5"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#5865F2] text-xs font-bold text-white">{(blocked.username || '?')[0].toUpperCase()}</div><span className="min-w-0 flex-1 truncate text-sm font-semibold text-[#DBDEE1]">{blocked.username || 'Kullanıcı'}</span><button type="button" onClick={() => handleUnblock(targetId)} className="rounded bg-[#4E5058] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#6D6F78]">Engeli kaldır</button></div>;
+              })}
             </div>
           </section>
 

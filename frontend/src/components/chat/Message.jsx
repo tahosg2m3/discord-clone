@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CornerUpLeft, FileText, Pencil, Pin, SmilePlus, Trash2 } from 'lucide-react';
+import { CornerUpLeft, FileText, Flag, History, Pencil, Pin, SmilePlus, Trash2, X } from 'lucide-react';
 import { formatTime } from '../../utils/formatTime';
 import { getColorForString } from '../../utils/colors';
 import { useSocket } from '../../context/SocketContext';
 import toast from 'react-hot-toast';
 import UserPopover from '../profile/UserPopover';
+import { useServer } from '../../context/ServerContext';
+import { createReport, getMessageEditHistory } from '../../services/platformApi';
 
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+const QUICK_REACTIONS = ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}'];
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
 
 function asAbsoluteUrl(url) {
@@ -39,6 +41,7 @@ function normalizeReactions(reactions) {
 function attachmentIsImage(attachment) {
   return attachment?.type === 'image'
     || attachment?.type === 'gif'
+    || attachment?.type === 'sticker'
     || attachment?.mimetype?.startsWith('image/');
 }
 
@@ -51,12 +54,21 @@ export default function Message({
   onReply,
   onReaction,
   onPin,
+  canManageMessages = false,
+  canPinMessages = canManageMessages,
 }) {
   const { socket } = useSocket();
+  const { currentServer } = useServer();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [showProfile, setShowProfile] = useState(false);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [editHistory, setEditHistory] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) setEditContent(message.content || '');
+  }, [isEditing, message.content]);
 
   const reactions = useMemo(() => normalizeReactions(message.reactions), [message.reactions]);
   const hasMention = Boolean(
@@ -108,6 +120,33 @@ export default function Message({
 
   const handlePin = () => onPin?.(message);
 
+  const handleShowHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      setEditHistory(await getMessageEditHistory(message.channelId, message.id));
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleReport = async () => {
+    if (!currentServer?.id) return;
+    const reason = window.prompt('Bu mesajı neden şikâyet ediyorsun?');
+    if (!reason?.trim()) return;
+    try {
+      await createReport(currentServer.id, {
+        type: 'message',
+        messageId: message.id,
+        channelId: message.channelId,
+        targetUserId: message.userId,
+        reason: reason.trim(),
+      });
+      toast.success('Şikâyetin moderatörlere gönderildi.');
+    } catch (error) { toast.error(error.message); }
+  };
+
   const avatarColor = getColorForString(message.username || '?');
   const initial = (message.username || '?')[0].toUpperCase();
   const messageUser = { id: message.userId, username: message.username };
@@ -124,6 +163,29 @@ export default function Message({
   return (
     <>
       {showProfile && <UserPopover targetUser={messageUser} onClose={() => setShowProfile(false)} />}
+      {editHistory && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setEditHistory(null)}>
+          <section className="w-full max-w-lg rounded-2xl border border-white/[0.08] bg-[#151d2c] p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-white">Düzenleme geçmişi</h3>
+                <p className="text-xs text-[#94a3b8]">Mesajın önceki sürümleri</p>
+              </div>
+              <button type="button" onClick={() => setEditHistory(null)} className="rounded-lg p-2 text-[#94a3b8] hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="max-h-[55vh] space-y-2 overflow-y-auto">
+              {(editHistory.history || []).length === 0 ? (
+                <p className="rounded-xl bg-[#0f172a] p-4 text-sm text-[#94a3b8]">Kayıtlı eski sürüm yok.</p>
+              ) : (editHistory.history || []).slice().reverse().map((entry, index) => (
+                <article key={`${entry.editedAt || entry.timestamp || index}-${index}`} className="rounded-xl bg-[#0f172a] p-3">
+                  <time className="text-[11px] text-[#64748b]">{formatTime(entry.editedAt || entry.timestamp)}</time>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-[#cbd5e1]">{entry.content || entry.previousContent || '—'}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       <div className={`group relative border-l-2 px-4 py-0.5 transition-colors hover:bg-white/[0.035] ${hasMention ? 'border-[#fbbf24] bg-[#f59e0b]/[0.08]' : 'border-transparent'} ${grouped ? '' : 'mt-[17px]'}`}>
         <div className="absolute right-4 -top-4 z-20 flex overflow-visible rounded-md border border-[#111827] bg-[#1e293b] shadow-lg opacity-0 transition-opacity group-hover:opacity-100">
@@ -144,18 +206,22 @@ export default function Message({
               </div>
             )}
           </div>
-          <button onClick={handlePin} className={`p-2 transition-colors hover:bg-[#334155] ${message.isPinned ? 'text-[#fbbf24]' : 'text-[#B5BAC1] hover:text-[#DBDEE1]'}`} title={message.isPinned ? 'Sabitlemeyi kaldır' : 'Mesajı sabitle'} aria-label={message.isPinned ? 'Sabitlemeyi kaldır' : 'Mesajı sabitle'}>
+          {canPinMessages && <button onClick={handlePin} className={`p-2 transition-colors hover:bg-[#334155] ${message.isPinned ? 'text-[#fbbf24]' : 'text-[#B5BAC1] hover:text-[#DBDEE1]'}`} title={message.isPinned ? 'Sabitlemeyi kaldır' : 'Mesajı sabitle'} aria-label={message.isPinned ? 'Sabitlemeyi kaldır' : 'Mesajı sabitle'}>
             <Pin className="h-4 w-4" />
-          </button>
-          {isOwn && !isEditing && (
-            <>
-              <button onClick={() => setIsEditing(true)} className="p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#DBDEE1]" title="Düzenle" aria-label="Düzenle">
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button onClick={handleDelete} className="rounded-r-md p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#fb7185]" title="Sil" aria-label="Sil">
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </>
+          </button>}
+          {message.isEdited && (isOwn || canManageMessages) && (
+            <button type="button" disabled={historyLoading} onClick={handleShowHistory} className="p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#DBDEE1] disabled:opacity-50" title="Düzenleme geçmişi" aria-label="Düzenleme geçmişi">
+              <History className="h-4 w-4" />
+            </button>
+          )}
+          {isOwn && !isEditing && <button onClick={() => setIsEditing(true)} className="p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#DBDEE1]" title="Düzenle" aria-label="Düzenle">
+            <Pencil className="h-4 w-4" />
+          </button>}
+          {(isOwn || canManageMessages) && !isEditing && <button onClick={handleDelete} className="rounded-r-md p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#fb7185]" title="Sil" aria-label="Sil">
+            <Trash2 className="h-4 w-4" />
+          </button>}
+          {!isOwn && currentServer?.id && (
+            <button onClick={handleReport} className="rounded-r-md p-2 text-[#B5BAC1] transition-colors hover:bg-[#334155] hover:text-[#fb7185]" title="Mesajı şikâyet et" aria-label="Mesajı şikâyet et"><Flag className="h-4 w-4" /></button>
           )}
         </div>
 
@@ -182,6 +248,7 @@ export default function Message({
                 <span onClick={() => setShowProfile(true)} className="cursor-pointer text-[1rem] font-medium text-[#F2F3F5] hover:underline">
                   {message.username}
                 </span>
+                {(message.bot || message.type === 'bot' || message.author?.bot) && <span className="rounded bg-[#5865F2] px-1 py-0.5 text-[9px] font-bold uppercase leading-none text-white">Bot</span>}
                 <span className="select-none text-[0.75rem] font-medium text-[#64748b]">{formatTime(message.timestamp)}</span>
                 {message.isPinned && <Pin className="h-3.5 w-3.5 text-[#fbbf24]" aria-label="Sabitlenmiş mesaj" />}
               </div>
@@ -222,6 +289,7 @@ export default function Message({
                         code: ({ node, inline, ...props }) => inline
                           ? <code {...props} className="rounded bg-[#111827] px-1.5 py-0.5 font-mono text-[13px] text-[#DBDEE1]" />
                           : <div className="my-2 overflow-x-auto rounded-md border border-white/[0.06] bg-[#111827] p-3"><code {...props} className="font-mono text-[13px] text-[#DBDEE1]" /></div>,
+                        img: ({ node, ...props }) => <img {...props} className="mx-0.5 inline-block h-7 w-7 object-contain align-middle" loading="lazy" />,
                       }}
                     >
                       {message.content}
@@ -235,10 +303,16 @@ export default function Message({
                     {attachments.map((attachment, index) => {
                       const url = asAbsoluteUrl(attachment.url);
                       const label = attachment.filename || attachment.name || 'Dosya';
+                      const isAudio = attachment?.type === 'audio' || attachment?.mimetype?.startsWith('audio/');
                       return attachmentIsImage(attachment) ? (
                         <a key={`${url}-${index}`} href={url} target="_blank" rel="noopener noreferrer" className="block max-w-[min(520px,100%)] overflow-hidden rounded-xl border border-white/[0.08] bg-[#111827]">
                           <img src={attachment.previewUrl || url} alt={label} className="max-h-[360px] max-w-full object-contain" loading="lazy" />
                         </a>
+                      ) : isAudio ? (
+                        <div key={`${url}-${index}`} className="w-full max-w-md rounded-xl border border-white/[0.08] bg-[#1e293b] p-3">
+                          <p className="mb-2 text-xs font-semibold text-[#94a3b8]">🎙️ {label}</p>
+                          <audio controls preload="metadata" src={url} className="h-10 w-full" />
+                        </div>
                       ) : (
                         <a key={`${url}-${index}`} href={url} target="_blank" rel="noopener noreferrer" className="flex max-w-full items-center gap-3 rounded-xl border border-white/[0.08] bg-[#1e293b] px-3 py-2 text-[#cbd5e1] transition-colors hover:bg-[#26354b]">
                           <FileText className="h-7 w-7 shrink-0 text-[#60a5fa]" />

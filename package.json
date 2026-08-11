@@ -16,6 +16,16 @@
   "build": {
     "appId": "com.chatapp.discord-clone",
     "productName": "Discord Clone",
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
     "directories": {
       "output": "release"
     },
@@ -34,8 +44,25 @@
           "!data.sqlite-*",
           "!datayedek.json",
           "!datayedek2.json",
-          "!.env",
-          "!uploads/**/*"
+          "!datayedek*.json",
+          "!.env*",
+          "!uploads/**/*",
+          "!node_modules/.bin/**/*",
+          "!node_modules/nodemon/**/*",
+          "!node_modules/@types/**/*",
+          "!**/*.md",
+          "!**/*.map"
+        ]
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*",
+          "!nodemon/**/*",
+          "!@types/**/*",
+          "!**/*.md",
+          "!**/*.map"
         ]
       }
     ],
@@ -44,7 +71,17 @@
     },
     "mac": {
       "target": ["dmg"],
-      "category": "public.app-category.social-networking"
+      "category": "public.app-category.social-networking",
+      "hardenedRuntime": true,
+      "darkModeSupport": true,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "extendInfo": {
+        "LSMultipleInstancesProhibited": true,
+        "NSMicrophoneUsageDescription": "Discord Clone sesli sohbet için mikrofonunu kullanır.",
+        "NSCameraUsageDescription": "Discord Clone görüntülü sohbet için kameranı kullanır.",
+        "NSAudioCaptureUsageDescription": "Discord Clone ekran yayını sırasında sistem sesini paylaşmak için ses yakalama izni kullanır."
+      }
     },
     "linux": {
       "target": ["AppImage", "deb"],
@@ -52,10 +89,10 @@
     }
   },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
-    "concurrently": "^8.2.2",
-    "wait-on": "^7.2.0",
-    "cross-env": "^7.0.3"
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "concurrently": "^10.0.4",
+    "wait-on": "^9.1.0",
+    "cross-env": "^10.1.0"
   }
 }

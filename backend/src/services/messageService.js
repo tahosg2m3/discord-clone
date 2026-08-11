@@ -19,10 +19,25 @@ function createSafeLinkMetadata(value) {
   }
 }
 
+function normalizeVoiceMessage(value) {
+  if (!value || typeof value !== 'object' || typeof value.url !== 'string') return null;
+  const url = value.url.trim().slice(0, 2048);
+  const durationMs = Math.min(Math.max(Number(value.durationMs) || 0, 100), 600_000);
+  if (!url || !durationMs) return null;
+  const waveform = Array.isArray(value.waveform)
+    ? value.waveform.slice(0, 256).map(point => Math.min(1, Math.max(0, Number(point) || 0)))
+    : [];
+  const mimeType = /^audio\/[a-z0-9.+-]+$/i.test(String(value.mimeType || ''))
+    ? String(value.mimeType).slice(0, 100)
+    : 'audio/webm';
+  return { url, durationMs, waveform, mimeType };
+}
+
 class MessageService {
   // Constructor'da artık veri tutmuyoruz, storage kullanacağız.
 
-  async createMessage({ username, content, channelId, userId, attachments = [], replyTo = null }) {
+  async createMessage({ username, content, channelId, userId, attachments = [], replyTo = null, voiceMessage = null }) {
+    const safeVoiceMessage = normalizeVoiceMessage(voiceMessage);
     const message = {
       id: uuidv4(),
       username,
@@ -30,7 +45,7 @@ class MessageService {
       content,
       channelId,
       timestamp: Date.now(),
-      type: 'user',
+      type: safeVoiceMessage ? 'voice' : 'user',
       isEdited: false,
       metadata: null,
       attachments: Array.isArray(attachments) ? attachments : [],
@@ -41,6 +56,8 @@ class MessageService {
       } : null,
       reactions: {},
       isPinned: false,
+      voiceMessage: safeVoiceMessage,
+      editHistory: [],
     };
 
     // URL yerelde ayrıştırılır; backend hiçbir kullanıcı bağlantısına istek atmaz.

@@ -74,6 +74,15 @@ export const VoiceProvider = ({ children }) => {
   const [isServerDeafened, setIsServerDeafened] = useState(false);
   const [voiceCapabilities, setVoiceCapabilities] = useState(DEFAULT_CAPABILITIES);
   const [voiceError, setVoiceError] = useState('');
+  const [availableDevices, setAvailableDevices] = useState({ audioinput: [], audiooutput: [], videoinput: [] });
+  const [inputDeviceId, setInputDeviceId] = useState(() => localStorage.getItem('voice:input-device') || '');
+  const [outputDeviceId, setOutputDeviceId] = useState(() => localStorage.getItem('voice:output-device') || '');
+  const [cameraDeviceId, setCameraDeviceId] = useState(() => localStorage.getItem('voice:camera-device') || '');
+  const [voiceMode, setVoiceModeState] = useState(() => localStorage.getItem('voice:mode') || 'activity');
+  const [pushToTalkKey, setPushToTalkKeyState] = useState(() => localStorage.getItem('voice:ptt-key') || 'Space');
+  const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
+  const [noiseSuppression, setNoiseSuppressionState] = useState(() => localStorage.getItem('voice:noise-suppression') !== 'false');
+  const [screenSharePreset, setScreenSharePreset] = useState(() => localStorage.getItem('voice:screen-preset') || '1080p30');
 
   const userRef = useRef(user);
   const socketRef = useRef(socket);
@@ -94,6 +103,11 @@ export const VoiceProvider = ({ children }) => {
   const pendingVoiceJoinRef = useRef(null);
   const joinInProgressRef = useRef(false);
   const rejoiningRef = useRef(false);
+  const inputDeviceIdRef = useRef(inputDeviceId);
+  const cameraDeviceIdRef = useRef(cameraDeviceId);
+  const voiceModeRef = useRef(voiceMode);
+  const pushToTalkActiveRef = useRef(false);
+  const noiseSuppressionRef = useRef(noiseSuppression);
 
   useEffect(() => {
     userRef.current = user;
@@ -102,6 +116,56 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     socketRef.current = socket;
   }, [socket]);
+
+  useEffect(() => { inputDeviceIdRef.current = inputDeviceId; localStorage.setItem('voice:input-device', inputDeviceId); }, [inputDeviceId]);
+  useEffect(() => { localStorage.setItem('voice:output-device', outputDeviceId); }, [outputDeviceId]);
+  useEffect(() => { cameraDeviceIdRef.current = cameraDeviceId; localStorage.setItem('voice:camera-device', cameraDeviceId); }, [cameraDeviceId]);
+  useEffect(() => { voiceModeRef.current = voiceMode; localStorage.setItem('voice:mode', voiceMode); }, [voiceMode]);
+  useEffect(() => { localStorage.setItem('voice:ptt-key', pushToTalkKey); }, [pushToTalkKey]);
+  useEffect(() => { noiseSuppressionRef.current = noiseSuppression; localStorage.setItem('voice:noise-suppression', String(noiseSuppression)); }, [noiseSuppression]);
+  useEffect(() => { localStorage.setItem('voice:screen-preset', screenSharePreset); }, [screenSharePreset]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return undefined;
+    const refreshDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setAvailableDevices({
+          audioinput: devices.filter(device => device.kind === 'audioinput'),
+          audiooutput: devices.filter(device => device.kind === 'audiooutput'),
+          videoinput: devices.filter(device => device.kind === 'videoinput'),
+        });
+      } catch { /* Tarayıcı cihaz listesini vermeyebilir. */ }
+    };
+    refreshDevices();
+    navigator.mediaDevices.addEventListener?.('devicechange', refreshDevices);
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', refreshDevices);
+  }, []);
+
+  useEffect(() => {
+    const editable = target => target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+    const setPressed = pressed => {
+      pushToTalkActiveRef.current = pressed;
+      setIsPushToTalkActive(pressed);
+      if (voiceModeRef.current !== 'push-to-talk') return;
+      audioStreamRef.current?.getAudioTracks().forEach(track => {
+        track.enabled = pressed && !isMutedRef.current && !voiceCapabilitiesRef.current.serverMuted;
+      });
+    };
+    const down = event => {
+      if (voiceModeRef.current !== 'push-to-talk' || event.code !== pushToTalkKey || editable(event.target)) return;
+      event.preventDefault();
+      if (!event.repeat) setPressed(true);
+    };
+    const up = event => {
+      if (event.code !== pushToTalkKey) return;
+      event.preventDefault();
+      setPressed(false);
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, [pushToTalkKey]);
 
   useEffect(() => {
     activeVoiceChannelRef.current = activeVoiceChannel;
@@ -364,27 +428,35 @@ export const VoiceProvider = ({ children }) => {
 
     if (hasLiveAudioTrack(audioStreamRef.current)) {
       audioStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !isMutedRef.current;
+        track.enabled = !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
       });
       return true;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...(inputDeviceIdRef.current ? { deviceId: { exact: inputDeviceIdRef.current } } : {}),
+          echoCancellation: true,
+          noiseSuppression: noiseSuppressionRef.current,
+          autoGainControl: true,
+        },
+        video: false,
+      });
       if (!isInVoiceRef.current || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)) {
         stopStream(stream);
         return false;
       }
 
       stream.getAudioTracks().forEach((track) => {
-        track.enabled = !isMutedRef.current;
+        track.enabled = !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
       });
       audioStreamRef.current = stream;
       setMyStream(stream);
 
       const result = await notifyStreamChanged(activeChannel.id, {
         kind: 'audio',
-        enabled: !isMutedRef.current,
+        enabled: !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current),
       });
       if (!result?.success) {
         releaseMicrophone();
@@ -461,7 +533,10 @@ export const VoiceProvider = ({ children }) => {
     if (!(await ensureStreamPermission(activeChannel))) return;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: cameraDeviceIdRef.current ? { deviceId: { exact: cameraDeviceIdRef.current } } : true,
+        audio: false,
+      });
       if (!isInVoiceRef.current || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)) {
         stopStream(stream);
         return;
@@ -500,7 +575,12 @@ export const VoiceProvider = ({ children }) => {
     if (!(await ensureStreamPermission(activeChannel))) return;
 
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const presets = {
+        '720p30': { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        '1080p30': { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } },
+        '1080p60': { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 60 } },
+      };
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: presets[screenSharePreset] || presets['1080p30'], audio: false });
       if (!isInVoiceRef.current || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)) {
         stopStream(stream);
         return;
@@ -690,7 +770,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     audioStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = !nextMuted;
+      track.enabled = !nextMuted && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
     });
   };
 
@@ -703,6 +783,49 @@ export const VoiceProvider = ({ children }) => {
     isDeafenedRef.current = nextDeafened;
     applyDeafenState(nextDeafened);
     setIsDeafened(nextDeafened);
+  };
+
+  const setVoiceMode = (mode) => {
+    const normalized = mode === 'push-to-talk' ? 'push-to-talk' : 'activity';
+    voiceModeRef.current = normalized;
+    setVoiceModeState(normalized);
+    if (normalized !== 'push-to-talk') {
+      pushToTalkActiveRef.current = false;
+      setIsPushToTalkActive(false);
+    }
+    audioStreamRef.current?.getAudioTracks().forEach(track => {
+      track.enabled = !isMutedRef.current && (normalized !== 'push-to-talk' || pushToTalkActiveRef.current);
+    });
+  };
+
+  const setPushToTalkKey = (key) => {
+    if (!key) return;
+    setPushToTalkKeyState(key);
+  };
+
+  const changeInputDevice = async (deviceId) => {
+    inputDeviceIdRef.current = deviceId;
+    setInputDeviceId(deviceId);
+    if (!isInVoiceRef.current || !voiceCapabilitiesRef.current.canSpeak) return;
+    releaseMicrophone();
+    await ensureMicrophone({ skipCapabilityRefresh: true });
+  };
+
+  const changeCameraDevice = async (deviceId) => {
+    cameraDeviceIdRef.current = deviceId;
+    setCameraDeviceId(deviceId);
+    if (cameraStreamRef.current) {
+      stopCamera();
+      await toggleCamera();
+    }
+  };
+
+  const setNoiseSuppression = async (enabled) => {
+    noiseSuppressionRef.current = Boolean(enabled);
+    setNoiseSuppressionState(Boolean(enabled));
+    if (!isInVoiceRef.current || !audioStreamRef.current) return;
+    releaseMicrophone();
+    await ensureMicrophone({ skipCapabilityRefresh: true });
   };
 
   // PeerJS nesnesi tüm ses oturumu boyunca tek kalır. Gelen çağrılar sadece
@@ -1031,12 +1154,28 @@ export const VoiceProvider = ({ children }) => {
         isScreenSharing: Boolean(screenStream),
         isCameraOn: Boolean(cameraStream),
         voiceError,
+        availableDevices,
+        inputDeviceId,
+        outputDeviceId,
+        cameraDeviceId,
+        voiceMode,
+        pushToTalkKey,
+        isPushToTalkActive,
+        noiseSuppression,
+        screenSharePreset,
         joinVoiceChannel,
         leaveVoiceChannel,
         toggleMute,
         toggleDeafen,
         toggleScreenShare,
         toggleCamera,
+        changeInputDevice,
+        setOutputDeviceId,
+        changeCameraDevice,
+        setVoiceMode,
+        setPushToTalkKey,
+        setNoiseSuppression,
+        setScreenSharePreset,
       }}
     >
       {children}
