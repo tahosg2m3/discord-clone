@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, MonitorUp, Music, PhoneOff, Settings, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-react';
+import { MessageSquare, Mic, MicOff, MonitorUp, Music, PhoneOff, Settings, Users, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
 import { useSocket } from '../../context/SocketContext';
-import VideoGrid from './VideoGrid';
 
 function RemoteAudio({ stream, muted, outputDeviceId }) {
   const audioRef = useRef(null);
@@ -65,6 +64,10 @@ export default function VoicePanel() {
     isScreenSharing,
     isCameraOn,
     remoteStreams,
+    remoteVideoStreams,
+    voiceParticipants,
+    isVoiceViewOpen,
+    toggleVoiceView,
     canSpeak,
     canStream,
     isServerMuted,
@@ -77,14 +80,20 @@ export default function VoicePanel() {
     voiceMode,
     pushToTalkKey,
     isPushToTalkActive,
-    noiseSuppression,
+    voiceIsolationMode,
+    effectiveVoiceIsolationMode,
+    voiceProcessingStatus,
+    rnnoiseSupported,
+    voiceProcessingEngine,
+    audioQuality,
     screenSharePreset,
     changeInputDevice,
     setOutputDeviceId,
     changeCameraDevice,
     setVoiceMode,
     setPushToTalkKey,
-    setNoiseSuppression,
+    setVoiceIsolationMode,
+    setAudioQuality,
     setScreenSharePreset,
   } = useVoice();
 
@@ -113,17 +122,24 @@ export default function VoicePanel() {
     });
   };
 
-  const hasRemoteVideo = Object.values(remoteStreams).some(
-    stream => stream.getVideoTracks().length > 0,
-  );
+  const liveVideoCount = Object.keys(remoteVideoStreams).length + (isScreenSharing || isCameraOn ? 1 : 0);
+  const voiceProcessingLabels = {
+    idle: 'Bir ses kanalına katıldığında seçtiğin ayar uygulanır.',
+    starting: 'Yeni ses işleme zinciri hazırlanıyor…',
+    active: effectiveVoiceIsolationMode === 'strong' && voiceProcessingEngine === 'rnnoise'
+      ? 'RNNoise yapay zekâ gürültü engelleme etkin.'
+      : `${effectiveVoiceIsolationMode === 'standard' ? 'Standart' : 'Kapalı'} ses izolasyonu etkin.`,
+    fallback: effectiveVoiceIsolationMode === 'off'
+      ? 'İzolasyon kapalı; mikrofon tarayıcı uyumluluk ayarlarıyla çalışıyor.'
+      : 'Tarayıcı desteğine göre standart gürültü azaltma kullanılıyor.',
+    error: 'Yeni ayar uygulanamadı; çalışan ses bağlantısı korunuyor.',
+  };
 
   return (
-    <section className="shrink-0 border-t border-white/[0.06] bg-[#151b27] p-4">
+    <section className="relative shrink-0 border-t border-white/[0.06] bg-[#151b27] p-4">
       {Object.entries(remoteStreams).map(([userId, stream]) => (
         <RemoteAudio key={userId} stream={stream} muted={isDeafened} outputDeviceId={outputDeviceId} />
       ))}
-
-      {(isScreenSharing || isCameraOn || hasRemoteVideo) && <VideoGrid />}
 
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
@@ -135,7 +151,19 @@ export default function VoicePanel() {
           {voiceError && <div className="mt-1 text-[11px] text-[#fca5a5]">{voiceError}</div>}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={toggleVoiceView}
+            className={`relative flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold transition-colors ${isVoiceViewOpen ? 'bg-[#2563eb] text-white' : 'bg-white/[0.07] text-[#cbd5e1] hover:bg-white/[0.12]'}`}
+            title={isVoiceViewOpen ? 'Sohbete dön' : 'Ses odasını göster'}
+          >
+            {isVoiceViewOpen ? <MessageSquare className="h-4 w-4" /> : <Users className="h-4 w-4" />}
+            <span className="hidden xl:inline">{isVoiceViewOpen ? 'Sohbet' : 'Oda'}</span>
+            {liveVideoCount > 0 && <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ef4444] px-1 text-[9px] text-white">{liveVideoCount}</span>}
+            {liveVideoCount === 0 && voiceParticipants.length > 0 && <span className="text-[9px] text-[#94a3b8]">{voiceParticipants.length}</span>}
+          </button>
+
           <button
             type="button"
             onClick={() => setShowSettings(show => !show)}
@@ -202,7 +230,7 @@ export default function VoicePanel() {
       </div>
 
       {showSettings && (
-        <div className="relative mt-4 rounded-xl border border-white/[0.08] bg-[#0f172a] p-4">
+        <div className="custom-scrollbar absolute bottom-full right-4 z-[70] mb-2 max-h-[min(64vh,560px)] w-[min(760px,calc(100%-2rem))] overflow-y-auto rounded-xl border border-white/[0.1] bg-[#0f172a] p-4 shadow-2xl">
           <div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-bold text-white">Ses ve görüntü</h3><p className="text-[10px] text-[#64748b]">Değişiklikler aktif aramaya uygulanır.</p></div><button type="button" onClick={() => setShowSettings(false)} className="rounded p-1 text-[#94a3b8] hover:bg-white/[0.07] hover:text-white"><X className="h-4 w-4" /></button></div>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="text-[10px] font-bold uppercase text-[#64748b]">Giriş aygıtı<select value={inputDeviceId} onChange={event => changeInputDevice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="">Sistem varsayılanı</option>{availableDevices.audioinput.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Mikrofon ${index + 1}`}</option>)}</select></label>
@@ -210,8 +238,10 @@ export default function VoicePanel() {
             <label className="text-[10px] font-bold uppercase text-[#64748b]">Kamera<select value={cameraDeviceId} onChange={event => changeCameraDevice(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="">Sistem varsayılanı</option>{availableDevices.videoinput.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Kamera ${index + 1}`}</option>)}</select></label>
             <label className="text-[10px] font-bold uppercase text-[#64748b]">Giriş modu<select value={voiceMode} onChange={event => setVoiceMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="activity">Ses etkinliği</option><option value="push-to-talk">Bas konuş</option></select></label>
             {voiceMode === 'push-to-talk' && <label className="text-[10px] font-bold uppercase text-[#64748b]">Bas-konuş tuşu<input readOnly value={pushToTalkKey} onKeyDown={event => { event.preventDefault(); setPushToTalkKey(event.code); }} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-center text-xs font-bold text-[#cbd5e1] outline-none focus:border-[#3b82f6]" title="Alanı seçip istediğin tuşa bas" /></label>}
-            <label className="flex items-center justify-between rounded-lg bg-[#151d2c] px-3 py-2 text-xs text-[#cbd5e1]"><span>Gürültü azaltma</span><input type="checkbox" checked={noiseSuppression} onChange={event => setNoiseSuppression(event.target.checked)} /></label>
+            <label className="text-[10px] font-bold uppercase text-[#64748b]">Ses izolasyonu<select value={voiceIsolationMode} onChange={event => void setVoiceIsolationMode(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="off">Kapalı</option><option value="standard">Standart</option><option value="strong" disabled={!rnnoiseSupported}>RNNoise (Güçlü){!rnnoiseSupported ? ' — desteklenmiyor' : ''}</option></select></label>
+            <label className="text-[10px] font-bold uppercase text-[#64748b]">Ses kalitesi<select value={audioQuality} onChange={event => void setAudioQuality(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="standard">Standart</option><option value="high">Yüksek</option><option value="studio">Stüdyo</option></select></label>
             <label className="text-[10px] font-bold uppercase text-[#64748b]">Yayın kalitesi<select value={screenSharePreset} onChange={event => setScreenSharePreset(event.target.value)} className="mt-1.5 w-full rounded-lg border border-white/[0.08] bg-[#151d2c] px-2 py-2 text-xs text-[#cbd5e1] outline-none"><option value="720p30">720p / 30 FPS</option><option value="1080p30">1080p / 30 FPS</option><option value="1080p60">1080p / 60 FPS</option></select></label>
+            <div className={`rounded-lg border px-3 py-2 text-xs md:col-span-2 ${voiceProcessingStatus === 'error' ? 'border-[#ef4444]/30 bg-[#ef4444]/10 text-[#fca5a5]' : voiceProcessingStatus === 'fallback' ? 'border-[#f59e0b]/30 bg-[#f59e0b]/10 text-[#fcd34d]' : 'border-[#22c55e]/20 bg-[#22c55e]/10 text-[#86efac]'}`} role="status" aria-live="polite">{voiceProcessingLabels[voiceProcessingStatus] || voiceProcessingLabels.idle}</div>
           </div>
         </div>
       )}

@@ -31,7 +31,8 @@
     },
     "files": [
       "electron/**/*",
-      "frontend/dist/**/*"
+      "frontend/dist/**/*",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
       {
@@ -40,8 +41,21 @@
         "filter": [
           "**/*",
           "!data.json",
+          "!data.json.*.tmp",
           "!data.sqlite",
           "!data.sqlite-*",
+          "!data.sqlite*.tmp",
+          "!discord-clone.sqlite",
+          "!discord-clone.sqlite-*",
+          "!discord-clone.sqlite*.tmp",
+          "!data.sqlite-key",
+          "!data.sqlite-key.*.tmp",
+          "!data-encryption.key",
+          "!data-encryption.key.*.tmp",
+          "!data-encryption-migration.json",
+          "!data-encryption-migration.json.*.tmp",
+          "!data-encryption-key.safe",
+          "!data-encryption-key.safe.*.tmp",
           "!datayedek.json",
           "!datayedek2.json",
           "!datayedek*.json",

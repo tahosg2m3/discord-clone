@@ -13,6 +13,7 @@ export default function UserProfile() {
   const { isInVoice, isMuted, isDeafened, toggleMute, toggleDeafen } = useVoice();
   const [showMenu, setShowMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false); // AYARLAR MODAL STATE'İ
+  const [settingsInitialTab, setSettingsInitialTab] = useState('account');
 
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
@@ -84,7 +85,10 @@ export default function UserProfile() {
           </button>
           {/* DİŞLİ ÇARK İKONU DA AYARLARI AÇAR */}
           <button
-            onClick={() => setShowSettings(true)}
+            type="button"
+            onClick={() => { setSettingsInitialTab('account'); setShowSettings(true); }}
+            title="Kullanıcı ayarları"
+            aria-label="Kullanıcı ayarlarını aç"
             className="p-1.5 hover:bg-[#313338] hover:text-[#DBDEE1] rounded-md transition-colors"
           >
             <Settings className="w-[18px] h-[18px]" />
@@ -120,7 +124,7 @@ export default function UserProfile() {
                 ))}
               </div>
               <button
-                onClick={() => { setShowMenu(false); setShowSettings(true); }}
+                onClick={() => { setShowMenu(false); setSettingsInitialTab('profile'); setShowSettings(true); }}
                 className="w-full flex items-center px-2 py-2 text-[14px] text-[#B5BAC1] hover:bg-[#5865F2] hover:text-white rounded transition-colors group"
               >
                 <User className="w-[18px] h-[18px] mr-3" />
@@ -143,7 +147,7 @@ export default function UserProfile() {
       </div>
 
       {/* YENİ MODAL (State true olunca render edilir) */}
-      {showSettings && <UserSettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <UserSettingsModal initialTab={settingsInitialTab} onClose={() => setShowSettings(false)} />}
     </>
   );
 }

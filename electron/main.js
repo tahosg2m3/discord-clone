@@ -7,6 +7,7 @@ const {
   Menu,
   net,
   protocol,
+  safeStorage,
   session,
   shell,
   utilityProcess,
@@ -15,6 +16,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+
+// Electron ana süreci için oluşturulabilecek Node tanı raporlarının ortam
+// değişkenlerini (örneğin harici DATA_ENCRYPTION_KEY) içermesine izin verme.
+try {
+  if (process.report && 'excludeEnv' in process.report) process.report.excludeEnv = true;
+} catch (_) {
+  // Bazı eski Electron/Node sürümlerinde bu özellik salt okunur olabilir.
+}
 
 // Do not trust an ambient NODE_ENV in an installed application: a machine-wide
 // development value must never make a packaged build load localhost content.
@@ -27,15 +36,39 @@ const RENDERER_ROOT = path.resolve(__dirname, '../frontend/dist');
 const BACKEND_PORT = '3001';
 const PEER_PORT = '9000';
 const SHUTDOWN_MESSAGE = 'discord-clone:shutdown';
+const PROTECTED_DATA_KEY_FILE = 'data-encryption-key.safe';
+const DATA_MIGRATION_MARKER_FILE = 'data-encryption-migration.json';
+const ENCRYPTED_STATE_MAGIC = Buffer.from('discord-clone-encrypted-state', 'utf8');
+const BACKEND_PLATFORM_ENV_KEYS = Object.freeze([
+  // Node/native modüllerin temel süreç ve geçici klasör ihtiyaçları. Uygulama
+  // sırları (SMTP/JWT/GIPHY vb.) burada yoktur; yalnız runtime.env'den okunur.
+  'PATH',
+  'SystemRoot',
+  'WINDIR',
+  'ComSpec',
+  'PATHEXT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'HOME',
+  'USERPROFILE',
+  'LOCALAPPDATA',
+  'APPDATA',
+  'PROGRAMDATA',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+]);
 
 const PRODUCTION_CSP = [
   "default-src 'none'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https: http://127.0.0.1:3001 http://localhost:3001",
   "media-src 'self' blob: https: http://127.0.0.1:3001 http://localhost:3001",
   "font-src 'self' data:",
-  "connect-src 'self' http://127.0.0.1:3001 http://localhost:3001 ws://127.0.0.1:3001 ws://localhost:3001 http://127.0.0.1:9000 http://localhost:9000 ws://127.0.0.1:9000 ws://localhost:9000 https://tenor.googleapis.com",
+  "connect-src 'self' http://127.0.0.1:3001 http://localhost:3001 ws://127.0.0.1:3001 ws://localhost:3001 http://127.0.0.1:9000 http://localhost:9000 ws://127.0.0.1:9000 ws://localhost:9000",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "object-src 'none'",
@@ -192,13 +225,144 @@ function prepareRuntimeEnvFile() {
   return runtimeEnvFile;
 }
 
-function createBackendEnvironment(runtimeEnvFile) {
-  const environment = { ...process.env };
-  delete environment.NODE_OPTIONS;
-  delete environment.NODE_EXTRA_CA_CERTS;
-  delete environment.ELECTRON_RUN_AS_NODE;
+async function writeProtectedFileAtomic(targetPath, contents) {
+  const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  let handle;
+  try {
+    await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+    handle = await fs.promises.open(temporaryPath, 'wx', 0o600);
+    await handle.writeFile(contents);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.promises.rename(temporaryPath, targetPath);
+    if (process.platform !== 'win32') await fs.promises.chmod(targetPath, 0o600);
+  } catch (error) {
+    if (handle) await handle.close().catch(() => {});
+    await fs.promises.unlink(temporaryPath).catch(() => {});
+    throw error;
+  }
+}
 
-  return {
+function fileContainsBytes(filePath, needle) {
+  const descriptor = fs.openSync(filePath, 'r');
+  const chunkSize = 64 * 1024;
+  const buffer = Buffer.allocUnsafe(chunkSize + needle.length - 1);
+  let overlap = 0;
+  let position = 0;
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(descriptor, buffer, overlap, chunkSize, position);
+      if (!bytesRead) return false;
+      const available = overlap + bytesRead;
+      if (buffer.subarray(0, available).includes(needle)) return true;
+      overlap = Math.min(needle.length - 1, available);
+      buffer.copy(buffer, 0, available - overlap, available);
+      position += bytesRead;
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function inspectStateBeforeProtectedKeyCreation(dataDirectory) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dataDirectory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return { hasLegacyPlaintext: false };
+    throw new Error(`Uygulama veri klasörü anahtar oluşturulmadan önce denetlenemedi: ${error.message}`);
+  }
+
+  const names = new Set(entries.map(entry => entry.name));
+  const hasProtectedKeyResidue = entries.some(entry => (
+    entry.name.startsWith(`${PROTECTED_DATA_KEY_FILE}.`) && entry.name.endsWith('.tmp')
+  ));
+  const hasMigrationMarker = names.has(DATA_MIGRATION_MARKER_FILE)
+    || entries.some(entry => (
+      entry.name.startsWith(`${DATA_MIGRATION_MARKER_FILE}.`) && entry.name.endsWith('.tmp')
+    ));
+  const hasRawKeyResidue = entries.some(entry => (
+    /^(?:data-encryption\.key|data\.sqlite-key)(?:\..+\.tmp)?$/i.test(entry.name)
+  ));
+
+  if (hasProtectedKeyResidue || hasMigrationMarker || hasRawKeyResidue) {
+    throw new Error(
+      'İşletim sistemi korumalı veri anahtarı eksik, ancak önceki bir anahtar/migration kaydı mevcut. '
+      + 'Yeni anahtar üretilmedi; doğru anahtarı veya uygulama veri yedeğini geri yükleyin.',
+    );
+  }
+
+  const stateArtifacts = entries.filter(entry => (
+    /^(?:data\.json(?:\..+\.tmp)?|(?:discord-clone|data)\.sqlite(?:-(?:wal|shm|journal)|\..+\.tmp)?|datayedek.*\.json(?:\..+\.tmp)?)$/i
+      .test(entry.name)
+  ));
+
+  let hasLegacyPlaintext = false;
+  for (const artifact of stateArtifacts) {
+    if (!artifact.isFile()) {
+      throw new Error(`Uygulama veri kalıntısı normal bir dosya değil (${artifact.name}); yeni anahtar üretilmedi.`);
+    }
+    const artifactPath = path.join(dataDirectory, artifact.name);
+    const size = fs.statSync(artifactPath).size;
+    if (!size) continue;
+    if (fileContainsBytes(artifactPath, ENCRYPTED_STATE_MAGIC)) {
+      throw new Error(
+        'Şifreli uygulama verisi bulundu ancak işletim sistemi korumalı anahtarı eksik. '
+        + 'Yeni anahtar üretilmedi; veri kurtarma için eski anahtarı geri yükleyin.',
+      );
+    }
+    hasLegacyPlaintext = true;
+  }
+
+  return { hasLegacyPlaintext };
+}
+
+async function getPackagedDataEncryptionKey() {
+  // Kurumsal/harici dağıtımlar kendi 32 baytlık anahtarlarını süreç ortamından
+  // sağlayabilir. Bu durumda Electron anahtar dosyası oluşturmaz.
+  if (process.env.DATA_ENCRYPTION_KEY) {
+    return { key: process.env.DATA_ENCRYPTION_KEY, created: false, external: true };
+  }
+
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    throw new Error('İşletim sistemi güvenli anahtar deposu kullanılamıyor. DATA_ENCRYPTION_KEY tanımlayın.');
+  }
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    throw new Error('Linux güvenli anahtar deposu basic_text modunda. DATA_ENCRYPTION_KEY harici ve güvenli biçimde tanımlanmalıdır.');
+  }
+
+  const protectedKeyPath = path.join(app.getPath('userData'), PROTECTED_DATA_KEY_FILE);
+  if (fs.existsSync(protectedKeyPath)) {
+    const encryptedKey = await fs.promises.readFile(protectedKeyPath);
+    const decrypted = await safeStorage.decryptStringAsync(encryptedKey);
+    const key = decrypted?.result;
+    if (!key) throw new Error('İşletim sistemi korumalı veri anahtarı çözülemedi.');
+
+    if (decrypted.shouldReEncrypt) {
+      const rotated = await safeStorage.encryptStringAsync(key);
+      await writeProtectedFileAtomic(protectedKeyPath, rotated);
+    }
+    return { key, created: false, external: false };
+  }
+
+  // Anahtar dosyasının silinmesini yeni kurulum sanmak şifreli veriyi kalıcı
+  // olarak kilitler. Envelope kanıtı veya eski key/marker varsa fail-closed.
+  inspectStateBeforeProtectedKeyCreation(app.getPath('userData'));
+  const key = crypto.randomBytes(32).toString('base64url');
+  const encryptedKey = await safeStorage.encryptStringAsync(key);
+  await writeProtectedFileAtomic(protectedKeyPath, encryptedKey);
+  return { key, created: true, external: false };
+}
+
+function createBackendEnvironment(runtimeEnvFile, dataEncryptionKey, allowPlaintextStateMigration = false) {
+  const environment = {};
+  BACKEND_PLATFORM_ENV_KEYS.forEach(key => {
+    const value = process.env[key];
+    if (typeof value === 'string' && value) environment[key] = value;
+  });
+
+  const backendEnvironment = {
     ...environment,
     PORT: BACKEND_PORT,
     PEER_PORT,
@@ -207,12 +371,17 @@ function createBackendEnvironment(runtimeEnvFile) {
     CLIENT_URL: APP_ORIGIN,
     APP_DATA_DIR: app.getPath('userData'),
     RUNTIME_ENV_FILE: runtimeEnvFile,
+    DATA_ENCRYPTION_KEY: dataEncryptionKey,
     DESKTOP_INSTANCE_TOKEN: backendInstanceToken,
     NODE_ENV: 'production',
   };
+  if (allowPlaintextStateMigration) {
+    backendEnvironment.ALLOW_PLAINTEXT_STATE_MIGRATION = 'true';
+  }
+  return backendEnvironment;
 }
 
-function startPackagedBackend() {
+async function startPackagedBackend() {
   if (isDev || backendProcess) return;
 
   const backendRoot = path.join(process.resourcesPath, 'backend');
@@ -221,16 +390,33 @@ function startPackagedBackend() {
   backendInstanceToken = crypto.randomBytes(32).toString('hex');
 
   try {
+    const dataKey = await getPackagedDataEncryptionKey();
+    const explicitExternalMigration = dataKey.external
+      && String(process.env.ALLOW_PLAINTEXT_STATE_MIGRATION || '').trim().toLowerCase() === 'true';
+    // İlk safeStorage anahtarı, paketli eski plaintext kurulumu yalnız bir kez
+    // taşıyabilsin. Harici anahtarda ise operatörün açık opt-in'i zorunludur.
+    const allowPlaintextStateMigration = dataKey.created || explicitExternalMigration;
     const child = utilityProcess.fork(backendEntry, [], {
       cwd: backendRoot,
-      env: createBackendEnvironment(runtimeEnvFile),
+      env: createBackendEnvironment(
+        runtimeEnvFile,
+        dataKey.key,
+        allowPlaintextStateMigration,
+      ),
       stdio: 'inherit',
       serviceName: 'Discord Clone Backend',
     });
+    if (dataKey.external) delete process.env.DATA_ENCRYPTION_KEY;
+    delete process.env.ALLOW_PLAINTEXT_STATE_MIGRATION;
     backendProcess = child;
 
-    child.on('error', (type, location, report) => {
-      console.error('Backend utility process error:', type, location, report || '');
+    child.on('error', (type, location) => {
+      // Electron'un üçüncü argümanı tam Node diagnostic report'tur ve child
+      // environment içindeki veri anahtarını/sırları barındırabilir. Asla loglama.
+      const incidentId = crypto.randomUUID();
+      const safeType = String(type || 'Unknown').replace(/[\r\n\t]/g, ' ').slice(0, 80);
+      const safeLocation = String(location || 'unknown').replace(/[\r\n\t]/g, ' ').slice(0, 240);
+      console.error(`Backend utility process error [${incidentId}] type=${safeType} location=${safeLocation}`);
     });
     child.on('exit', code => {
       if (backendProcess === child) {
@@ -252,6 +438,7 @@ function startPackagedBackend() {
     backendProcess = null;
     backendInstanceToken = null;
     console.error('Backend process could not be started:', error);
+    throw error;
   }
 }
 
@@ -498,7 +685,7 @@ if (!ownsSingleInstance) {
   app.whenReady().then(async () => {
     if (!isDev) registerProductionProtocol();
     configurePermissions();
-    startPackagedBackend();
+    await startPackagedBackend();
     const backendReady = await waitForPackagedBackend();
     if (!backendReady) {
       dialog.showErrorBox(

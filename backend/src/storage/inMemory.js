@@ -12,6 +12,10 @@ const DATABASE_FILE = path.join(
   DATA_DIRECTORY,
   process.env.APP_DATA_DIR ? 'discord-clone.sqlite' : 'data.sqlite',
 );
+const DATA_ENCRYPTION_KEY_FILE = path.join(
+  DATA_DIRECTORY,
+  process.env.APP_DATA_DIR ? 'data-encryption.key' : 'data.sqlite-key',
+);
 
 const PERMISSIONS = Object.freeze([
   'ADMINISTRATOR',
@@ -196,9 +200,12 @@ class InMemoryStorage {
       backups: [],
     };
     this.saveTimeout = null;
+    this.isClosed = false;
+    this.closeResult = null;
     this.stateStore = new SQLiteStateStore({
       databasePath: DATABASE_FILE,
       legacyDataFile: DATA_FILE,
+      encryptionKeyFile: DATA_ENCRYPTION_KEY_FILE,
     });
     this.loadData();
   }
@@ -240,17 +247,28 @@ class InMemoryStorage {
       ), false);
       if (this.migrateRoleData() || this.migrateSocialData() || userProfilesChanged) this.saveData();
     } catch (error) {
-      console.error('Veri dosyası okunamadı; yeni veri yapısı oluşturuluyor:', error.message);
-      this.seedData();
+      // Şifreleme anahtarı uyuşmazlığı, bozuk authentication tag veya okunamayan
+      // kalıcı veri asla "boş kurulum" sayılmaz. Aksi halde seedData mevcut
+      // verinin üzerine yazıp gerçek kaybı gizleyebilirdi. Başlangıcı fail-closed
+      // durdurur ve operatöre asıl hatayı açıkça gösteririz.
+      console.error('Kalıcı uygulama verisi güvenli biçimde yüklenemedi; veri sıfırlanmadı:', error.message);
+      throw error;
     }
   }
 
   saveData() {
+    if (this.isClosed) {
+      console.error('Veriler kaydedilemedi: kalıcı depolama daha önce kapatıldı.');
+      return;
+    }
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
 
     this.saveTimeout = setTimeout(() => {
       try {
-        this.stateStore.save(this.createPersistedSnapshot());
+        const persisted = this.stateStore.save(this.createPersistedSnapshot());
+        if (!persisted) {
+          console.error('Veriler kaydedilemedi: kalıcı depolama yazma işlemi başarısız oldu.');
+        }
       } catch (error) {
         console.error('Veriler kaydedilemedi:', error.message);
       } finally {
@@ -263,13 +281,21 @@ class InMemoryStorage {
   // sağlar. Bu yöntem özellikle Electron'un backend sürecine SIGTERM yolladığı
   // durumda çağrılır.
   flush() {
+    if (this.isClosed) {
+      console.error('Veriler kaydedilemedi: kalıcı depolama daha önce kapatıldı.');
+      return false;
+    }
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
       this.saveTimeout = null;
     }
 
     try {
-      return this.stateStore.save(this.createPersistedSnapshot());
+      const persisted = this.stateStore.save(this.createPersistedSnapshot());
+      if (!persisted) {
+        console.error('Veriler kapatılırken kaydedilemedi: kalıcı depolama yazma işlemi başarısız oldu.');
+      }
+      return persisted;
     } catch (error) {
       console.error('Veriler kapatılırken kaydedilemedi:', error.message);
       return false;
@@ -277,8 +303,24 @@ class InMemoryStorage {
   }
 
   close() {
-    this.flush();
-    this.stateStore.close();
+    // SQLiteStateStore.close() codec anahtarını bellekten sıfırlar. İkinci bir
+    // close çağrısında sıfırlanmış anahtarla tekrar flush edip veriyi bozma.
+    if (this.isClosed) return this.closeResult;
+    const persisted = this.flush();
+    let closed = true;
+    try {
+      this.stateStore.close();
+    } catch (error) {
+      console.error('Kalıcı depolama güvenli biçimde kapatılamadı:', error.message);
+      closed = false;
+    }
+    this.isClosed = true;
+    this.closeResult = persisted && closed;
+    return this.closeResult;
+  }
+
+  async transformArchivedSnapshots(transformer) {
+    return this.stateStore.transformLegacySnapshots(transformer);
   }
 
   createPersistedSnapshot() {
@@ -1313,6 +1355,10 @@ class InMemoryStorage {
 }
 
 const storage = new InMemoryStorage();
+// Codec anahtarı constructor sırasında kendi Buffer'ına aldı. Child süreç tanı
+// raporları veya sonradan yüklenen modüller ham anahtarı ortamdan okuyamasın.
+delete process.env.DATA_ENCRYPTION_KEY;
+delete process.env.ALLOW_PLAINTEXT_STATE_MIGRATION;
 storage.PERMISSIONS = PERMISSIONS;
 storage.DEFAULT_MEMBER_PERMISSIONS = DEFAULT_MEMBER_PERMISSIONS;
 storage.ALL_PERMISSIONS = ALL_PERMISSIONS;

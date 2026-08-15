@@ -12,6 +12,15 @@ import { createReport, getMessageEditHistory } from '../../services/platformApi'
 
 const QUICK_REACTIONS = ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}'];
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
+const COUNTRY_FLAG_PATTERN = /(\p{Regional_Indicator}{2})/gu;
+
+function renderCountryFlagsWithTwemoji(content = '') {
+  return String(content).replace(COUNTRY_FLAG_PATTERN, flag => {
+    const code = [...flag].map(character => character.codePointAt(0).toString(16)).join('-');
+    const url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg`;
+    return `![${flag}](${url})`;
+  });
+}
 
 function asAbsoluteUrl(url) {
   if (!url || url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -292,7 +301,7 @@ export default function Message({
                         img: ({ node, ...props }) => <img {...props} className="mx-0.5 inline-block h-7 w-7 object-contain align-middle" loading="lazy" />,
                       }}
                     >
-                      {message.content}
+                      {renderCountryFlagsWithTwemoji(message.content)}
                     </ReactMarkdown>
                     {message.isEdited && <span className="ml-1 select-none text-[10px] text-[#64748b]">(düzenlendi)</span>}
                   </div>

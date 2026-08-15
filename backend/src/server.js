@@ -1,4 +1,12 @@
 ﻿// backend/src/server.js - KOMPLE GÜNCEL VERSİYON
+// FatalError/OOM tanı raporlarında SMTP/JWT/veri anahtarı gibi ortam sırlarını
+// dışarıda tut. Bu ayar uygulama modülleri yüklenmeden önce yapılmalıdır.
+try {
+  if (process.report && 'excludeEnv' in process.report) process.report.excludeEnv = true;
+} catch (_) {
+  // Eski Node sürümlerinde desteklenmiyorsa normal başlangıç devam eder.
+}
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -9,8 +17,15 @@ const path = require('path');
 // Route/middleware modülleri yüklenmeden önce .env'i oku; JWT ve APP_DATA_DIR
 // gibi güvenlik/persist ayarları modül yüklenirken kullanılır.
 dotenv.config();
+if (process.env.RUNTIME_ENV_FILE || process.env.SMTP_ENV_FILE) {
+  dotenv.config({
+    path: process.env.RUNTIME_ENV_FILE || process.env.SMTP_ENV_FILE,
+    override: false,
+  });
+}
 
 const storage = require('./storage/inMemory');
+const { hashPassword, isLegacyPlaintextPassword } = require('./services/passwordService');
 
 const serverRoutes = require('./routes/servers');
 const roleRoutes = require('./routes/roles');
@@ -20,6 +35,7 @@ const authRoutes = require('./routes/auth');
 const dmRoutes = require('./routes/dm');
 const friendRoutes = require('./routes/friends');
 const uploadRoutes = require('./routes/upload');
+const gifRoutes = require('./routes/gifs');
 const platformRoutes = require('./routes/platform');
 
 const setupSocketHandlers = require('./sockets');
@@ -63,6 +79,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/dm', dmRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/gifs', gifRoutes);
 // Yeni Discord-benzeri özellikler tam API yollarını kendi router'ında tanımlar.
 // Eski endpoint'ler yukarıda kalır ve geriye dönük uyumluluğunu korur.
 app.use('/api', platformRoutes);
@@ -85,6 +102,7 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3001;
 const HOST = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
 let peerServerController = null;
+let isShuttingDown = false;
 
 server.once('error', error => {
   console.error(`HTTP server could not start: ${error.message}`);
@@ -92,15 +110,81 @@ server.once('error', error => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
-  console.log(`📡 WebSocket server ready`);
-  console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+async function migrateLegacyPlaintextPasswords() {
+  const legacyUsers = storage.getAllUsers().filter(user => isLegacyPlaintextPassword(user.password));
+  if (!legacyUsers.length) return 0;
 
-  peerServerController = startPeerServer();
+  // Düz metin bırakılmış çok eski kayıtları servis istek kabul etmeden önce
+  // Argon2id'e çevir. Bcrypt hashleri parola bilinmeden dönüştürülemez; onlar
+  // başarılı ilk girişte auth akışı tarafından yükseltilir.
+  let migratedCount = 0;
+  for (const user of legacyUsers) {
+    if (isShuttingDown) break;
+    const passwordHash = await hashPassword(user.password);
+    // Hash çalışırken kapanış başladıysa kapanmış storage'a yazma yapma.
+    if (isShuttingDown) break;
+    storage.updateUserPassword(user.id, passwordHash, { invalidateSessions: false });
+    migratedCount += 1;
+  }
+  if (isShuttingDown) return migratedCount;
+  if (!storage.flush()) throw new Error('Argon2id parola geçişi diske kaydedilemedi.');
+  return migratedCount;
+}
+
+async function migrateArchivedPlaintextPasswords() {
+  if (isShuttingDown) return 0;
+  return storage.transformArchivedSnapshots(async snapshot => {
+    if (isShuttingDown) return { snapshot, changed: false, changedCount: 0 };
+    if (!Array.isArray(snapshot?.users)) {
+      return { snapshot, changed: false, changedCount: 0 };
+    }
+
+    let changedCount = 0;
+    for (const user of snapshot.users) {
+      if (isShuttingDown) return { snapshot, changed: false, changedCount: 0 };
+      if (!isLegacyPlaintextPassword(user?.password)) continue;
+      const passwordHash = await hashPassword(user.password);
+      if (isShuttingDown) return { snapshot, changed: false, changedCount: 0 };
+      user.password = passwordHash;
+      changedCount += 1;
+    }
+
+    return {
+      snapshot,
+      changed: changedCount > 0,
+      changedCount,
+    };
+  });
+}
+
+async function startServices() {
+  if (isShuttingDown) return;
+  const migratedPasswordCount = await migrateLegacyPlaintextPasswords();
+  if (isShuttingDown) return;
+  if (migratedPasswordCount) {
+    console.log(`🔐 ${migratedPasswordCount} eski parola Argon2id biçimine güvenle taşındı.`);
+  }
+  const migratedArchivedPasswordCount = await migrateArchivedPlaintextPasswords();
+  if (isShuttingDown) return;
+  if (migratedArchivedPasswordCount) {
+    console.log(`🔐 Eski şifreli snapshot'lardaki ${migratedArchivedPasswordCount} parola Argon2id biçimine taşındı.`);
+  }
+
+  server.listen(PORT, HOST, () => {
+    if (isShuttingDown) return;
+    console.log(`🚀 Server running on http://${HOST}:${PORT}`);
+    console.log('📡 WebSocket server ready');
+    console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+
+    peerServerController = startPeerServer();
+  });
+}
+
+startServices().catch(error => {
+  console.error(`Güvenli backend başlangıcı tamamlanamadı: ${error.message}`);
+  storage.close();
+  process.exit(1);
 });
-
-let isShuttingDown = false;
 
 function shutdown(signal) {
   if (isShuttingDown) return;
@@ -109,16 +193,19 @@ function shutdown(signal) {
 
   // Debounce edilmiş son yazıyı bağlantıları kapatmadan önce diske bas.
   // Paketli Electron, Windows'ta da çalışan IPC kapanış mesajını kullanır.
-  storage.flush();
+  let persistenceFailed = storage.flush() !== true;
+  if (persistenceFailed) {
+    console.error('Kapanış sırasında son uygulama durumu kalıcı depolamaya yazılamadı.');
+  }
 
   let pendingServers = 2;
   let finished = false;
   const finish = () => {
     if (finished) return;
     finished = true;
-    storage.close();
+    if (storage.close() !== true) persistenceFailed = true;
     console.log('HTTP and PeerJS servers closed');
-    process.exit(0);
+    process.exit(persistenceFailed ? 1 : 0);
   };
   const markServerClosed = () => {
     pendingServers -= 1;

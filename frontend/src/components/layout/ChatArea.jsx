@@ -170,12 +170,17 @@ export default function ChatArea() {
     setSearchQuery('');
     setRemoteSearchResults([]);
     setFirstUnreadId(null);
-    shouldScrollToBottomRef.current = true;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    // Kanal değişimindeki boşaltma render'ının, yeni mesajlar gelmeden önce
+    // bekleyen alt-kaydırma isteğini tüketmesini engelle.
+    shouldScrollToBottomRef.current = false;
 
     fetchChannelMessages(channelId)
       .then((channelMessages) => {
         if (!stillCurrent) return;
-        setMessages(channelMessages);
+        shouldScrollToBottomRef.current = true;
+        setMessages(Array.isArray(channelMessages) ? channelMessages : []);
       })
       .catch((error) => console.error('Kanal mesajları yüklenemedi:', error));
 
@@ -300,8 +305,12 @@ export default function ChatArea() {
 
   useEffect(() => {
     if (shouldScrollToBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: messages.length > 1 ? 'smooth' : 'auto' });
+      const messageList = messageListRef.current;
+      if (messageList) messageList.scrollTop = messageList.scrollHeight;
+      else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       shouldScrollToBottomRef.current = false;
+      isNearBottomRef.current = true;
+      setIsNearBottom(true);
       markChannelRead();
     }
   }, [markChannelRead, messages]);

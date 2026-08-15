@@ -51,6 +51,8 @@ PORT=3001
 CLIENT_URL=http://localhost:5173
 NODE_ENV=development
 JWT_SECRET=replace-with-a-long-random-secret
+# Optional: 32 bytes / 64 hex. Losing it makes encrypted data unrecoverable.
+# DATA_ENCRYPTION_KEY=...
 
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
@@ -90,7 +92,6 @@ VITE_PEER_HOST=peer.example.com
 VITE_PEER_PORT=443
 VITE_PEER_PATH=/peerjs
 VITE_PEER_SECURE=true
-VITE_TENOR_API_KEY=your-tenor-api-key
 ```
 
 ## Build
@@ -108,13 +109,17 @@ npm run build
 
 Generated Electron artifacts are placed under `release/`.
 
-For a packaged desktop installation, copy the generated `runtime.env.example` in the application's data directory to `runtime.env` and enter the real SMTP credentials. The application keeps SQLite data, uploads, and its generated JWT secret in the operating system's application-data directory.
+For a packaged desktop installation, copy the generated `runtime.env.example` in the application's data directory to `runtime.env` and enter the real SMTP credentials. Passwords are irreversibly hashed with Argon2id. SQLite/JSON application state is encrypted with AES-256-GCM; the data key is protected with Windows DPAPI or macOS Keychain. If the key or OS user profile is lost, encrypted data cannot be recovered, so keep a secure backup.
+
+GIF search uses GIPHY. Create a key at the GIPHY Developers portal and add `GIPHY_API_KEY` to `backend/.env` (or packaged `runtime.env`).
 
 ## Security
 
 - Dependency manifests are kept free of known npm audit findings at the time of release.
 - REST and Socket.IO actions derive the actor from a verified JWT; client-supplied user identities are not trusted.
 - Server, channel, messaging, voice, moderation, upload, and management operations enforce membership and permissions on the backend.
+- Passwords are hashed with Argon2id; legacy bcrypt hashes are upgraded after a successful login, while legacy plaintext passwords are migrated during the first secure startup.
+- SQLite/JSON state is stored in an AES-256-GCM envelope with a random nonce and authentication tag; a wrong key or tampered data fails closed instead of silently resetting state.
 - Secrets and local user data are excluded through `.gitignore`.
 
 For an internet-facing deployment, additionally use HTTPS/WSS, a reverse proxy, strict production CORS origins, rate limiting, monitoring, backups, and properly managed secrets. See [SECURITY.md](SECURITY.md) for vulnerability reporting.

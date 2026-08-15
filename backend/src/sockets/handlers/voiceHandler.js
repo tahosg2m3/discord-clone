@@ -253,17 +253,9 @@ module.exports = (io, socket) => {
     }
 
     socket.join(`voice:${channelId}`);
-    // Yeni socket veya yeni PeerJS kimliği diğer katılımcıların eski WebRTC
-    // çağrısını kapatıp doğru peerId ile tekrar kurmasını sağlar.
-    if (!existingUser || peerChanged || existingUser.socketId === socket.id) {
-      socket.to(`voice:${channelId}`).emit('voice:user-joined', {
-        channelId,
-        serverId: channel.serverId,
-        userId: String(userId),
-        username,
-        peerId,
-      });
-    }
+    // Yeni katılan istemci önce mevcut katılımcıları tanısın. Böylece hemen
+    // ardından gelecek PeerJS ses/kamera/yayın çağrılarını güvenlik kontrolü
+    // yüzünden yanlışlıkla reddetmez.
     socket.emit('voice:existing-users', users
       .filter((member) => !sameId(member.userId, userId))
       .map((member) => ({
@@ -275,6 +267,17 @@ module.exports = (io, socket) => {
         requestedToSpeak: channel.type === 'stage' ? Boolean(member.requestedToSpeak) : false,
         ...storage.getMemberModerationState(channel.serverId, member.userId),
       })));
+    // Yeni socket veya yeni PeerJS kimliği diğer katılımcıların eski WebRTC
+    // çağrısını kapatıp doğru peerId ile tekrar kurmasını sağlar.
+    if (!existingUser || peerChanged || existingUser.socketId === socket.id) {
+      socket.to(`voice:${channelId}`).emit('voice:user-joined', {
+        channelId,
+        serverId: channel.serverId,
+        userId: String(userId),
+        username,
+        peerId,
+      });
+    }
     const participant = users.find(member => sameId(member.userId, userId));
     const effectiveCapabilities = withStageRole(channel, capabilities, participant);
     sendCapabilities(socket, effectiveCapabilities);

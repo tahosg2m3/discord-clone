@@ -11,10 +11,25 @@ frontend/node_modules/
 frontend/dist/
 backend/data.sqlite
 backend/data.sqlite-*
+backend/data.sqlite*.tmp
+backend/discord-clone.sqlite
+backend/discord-clone.sqlite-*
+backend/discord-clone.sqlite*.tmp
+backend/data.sqlite-key
+backend/data.sqlite-key.*.tmp
+backend/data-encryption.key
+backend/data-encryption.key.*.tmp
+backend/data-encryption-migration.json
+backend/data-encryption-migration.json.*.tmp
 backend/data.json
+backend/data.json.*.tmp
 backend/uploads/
 .vscode/
 runtime.env
 jwt-secret
+data-encryption-key.safe
+data-encryption-key.safe.*.tmp
+data-encryption-migration.json
+data-encryption-migration.json.*.tmp
 
 backend/datayedek*.json

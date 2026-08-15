@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker, { EmojiStyle } from 'emoji-picker-react';
 import { Image as ImageIcon, Mic, SmilePlus, Square, X } from 'lucide-react';
 import FileUpload, { uploadChatFile } from './FileUpload';
 import GifPicker from './GifPicker';
@@ -360,6 +360,7 @@ export default function MessageInput({
               {(serverEmojis.length > 0 || serverStickers.length > 0) && <div className="max-h-32 w-[320px] overflow-y-auto border-b border-white/[0.08] p-2"><p className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-[#64748b]">Sunucu içeriği</p><div className="grid grid-cols-8 gap-1">{serverEmojis.map(item => <button key={`emoji-${item.id}`} type="button" title={`:${item.name}:`} onClick={() => { setMessage(current => `${current} ![${item.name}](${item.url}) `); setShowEmojiPicker(false); inputRef.current?.focus(); }} className="rounded-lg p-1 hover:bg-white/[0.08]"><img src={item.url} alt={item.name} className="h-7 w-7 object-contain" /></button>)}{serverStickers.map(item => <button key={`sticker-${item.id}`} type="button" title={item.name} onClick={() => { addAttachment({ ...item, type: 'sticker', filename: item.name }); setShowEmojiPicker(false); }} className="rounded-lg p-1 hover:bg-white/[0.08]"><img src={item.url} alt={item.name} className="h-7 w-7 object-contain" /></button>)}</div></div>}
               <EmojiPicker
                 theme="dark"
+                emojiStyle={EmojiStyle.TWITTER}
                 width={320}
                 height={400}
                 lazyLoadEmojis

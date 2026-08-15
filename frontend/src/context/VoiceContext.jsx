@@ -2,6 +2,11 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Peer } from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useSocket } from './SocketContext';
+import {
+  createRnnoiseProcessor,
+  isRnnoiseRuntimeSupported,
+  RNNOISE_SAMPLE_RATE,
+} from '../services/rnnoiseProcessor';
 
 const VoiceContext = createContext(null);
 
@@ -26,6 +31,31 @@ const DEFAULT_CAPABILITIES = Object.freeze({
   serverDeafened: false,
   isTimedOut: false,
 });
+
+export const VOICE_ISOLATION_MODES = Object.freeze(['off', 'standard', 'strong']);
+export const AUDIO_QUALITY_PRESETS = Object.freeze(['standard', 'high', 'studio']);
+
+const AUDIO_QUALITY_CONFIG = Object.freeze({
+  standard: Object.freeze({ sampleRate: 48000, channelCount: 1, sampleSize: 16, maxBitrate: 64000 }),
+  high: Object.freeze({ sampleRate: 48000, channelCount: 1, sampleSize: 24, maxBitrate: 96000 }),
+  studio: Object.freeze({ sampleRate: 48000, channelCount: 2, sampleSize: 24, maxBitrate: 128000 }),
+});
+
+function normalizeVoiceIsolationMode(mode) {
+  return VOICE_ISOLATION_MODES.includes(mode) ? mode : 'standard';
+}
+
+function normalizeAudioQuality(quality) {
+  return AUDIO_QUALITY_PRESETS.includes(quality) ? quality : 'high';
+}
+
+function getInitialVoiceIsolationMode() {
+  const storedMode = localStorage.getItem('voice:isolation-mode');
+  if (VOICE_ISOLATION_MODES.includes(storedMode)) return storedMode;
+
+  // Eski tek gürültü azaltma anahtarını yeni üç kademeli ayara taşı.
+  return localStorage.getItem('voice:noise-suppression') === 'false' ? 'off' : 'standard';
+}
 
 export const useVoice = () => useContext(VoiceContext);
 
@@ -54,6 +84,260 @@ function sameId(first, second) {
   return String(first || '') === String(second || '');
 }
 
+function getSupportedMediaConstraints() {
+  try {
+    return navigator.mediaDevices?.getSupportedConstraints?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildAudioConstraints({ deviceId, isolationMode, audioQuality, includeQuality = true }) {
+  const supported = getSupportedMediaConstraints();
+  const supports = (key) => !supported || Boolean(supported[key]);
+  const quality = AUDIO_QUALITY_CONFIG[audioQuality] || AUDIO_QUALITY_CONFIG.high;
+  const processingEnabled = isolationMode !== 'off';
+  const useRnnoise = isolationMode === 'strong' && isRnnoiseRuntimeSupported();
+  const constraints = {};
+
+  if (deviceId && supports('deviceId')) constraints.deviceId = { exact: deviceId };
+  if (supports('echoCancellation')) constraints.echoCancellation = processingEnabled;
+  // RNNoise ile tarayıcı gürültü engellemesini üst üste çalıştırmak metalik
+  // ses/pumping üretebilir. Güçlü modda yankı engelleme kalır; gürültü ve AGC
+  // işlemini RNNoise + aşağıdaki kontrollü Web Audio zinciri üstlenir.
+  if (supports('noiseSuppression')) constraints.noiseSuppression = processingEnabled && !useRnnoise;
+  if (supports('autoGainControl')) constraints.autoGainControl = processingEnabled && !useRnnoise;
+  if (supports('voiceIsolation')) constraints.voiceIsolation = isolationMode === 'strong' && !useRnnoise;
+
+  if (includeQuality) {
+    if (supports('sampleRate')) constraints.sampleRate = { ideal: useRnnoise ? RNNOISE_SAMPLE_RATE : quality.sampleRate };
+    if (supports('channelCount')) constraints.channelCount = { ideal: useRnnoise ? 1 : quality.channelCount };
+    if (supports('sampleSize')) constraints.sampleSize = { ideal: quality.sampleSize };
+    if (supports('latency')) constraints.latency = { ideal: 0.02 };
+  }
+
+  return constraints;
+}
+
+async function captureMicrophone({ deviceId, isolationMode, audioQuality }) {
+  const fullConstraints = buildAudioConstraints({ deviceId, isolationMode, audioQuality });
+  const processingConstraints = buildAudioConstraints({
+    deviceId,
+    isolationMode,
+    audioQuality,
+    includeQuality: false,
+  });
+  const deviceConstraints = deviceId ? { deviceId: { exact: deviceId } } : true;
+  const attempts = [fullConstraints, processingConstraints, deviceConstraints];
+  if (deviceId) attempts.push(true);
+
+  let lastError;
+  for (let index = 0; index < attempts.length; index += 1) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: attempts[index], video: false });
+      return {
+        stream,
+        usedConstraintFallback: index > 0,
+        usedDefaultDevice: deviceId && index === attempts.length - 1,
+      };
+    } catch (error) {
+      lastError = error;
+      if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') throw error;
+      const canRetry = ['OverconstrainedError', 'ConstraintNotSatisfiedError', 'TypeError', 'NotFoundError'].includes(error?.name);
+      if (!canRetry || index === attempts.length - 1) throw error;
+    }
+  }
+
+  throw lastError;
+}
+
+async function createProcessedVoiceStream(
+  rawStream,
+  isolationMode,
+  audioQuality,
+  { onRnnoiseRuntimeError } = {},
+) {
+  if (isolationMode === 'off') {
+    return {
+      outputStream: rawStream,
+      context: null,
+      nodes: [],
+      rnnoiseApplied: false,
+      processingEngine: 'none',
+    };
+  }
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Web Audio API desteklenmiyor.');
+
+  const quality = AUDIO_QUALITY_CONFIG[audioQuality] || AUDIO_QUALITY_CONFIG.high;
+  const wantsRnnoise = isolationMode === 'strong' && isRnnoiseRuntimeSupported();
+  let context;
+  try {
+    context = new AudioContextClass({
+      latencyHint: 'interactive',
+      sampleRate: wantsRnnoise ? RNNOISE_SAMPLE_RATE : quality.sampleRate,
+    });
+  } catch {
+    context = new AudioContextClass();
+  }
+
+  const nodes = [];
+  let rnnoiseSession = null;
+  try {
+    const source = context.createMediaStreamSource(rawStream);
+    const highPass = context.createBiquadFilter();
+    const lowPass = context.createBiquadFilter();
+    const compressor = context.createDynamicsCompressor();
+    const presence = context.createBiquadFilter();
+    const outputGain = context.createGain();
+    const destination = context.createMediaStreamDestination();
+    nodes.push(source, highPass, lowPass, compressor, presence, outputGain, destination);
+    try {
+      destination.channelCount = wantsRnnoise ? 1 : quality.channelCount;
+      destination.channelCountMode = 'explicit';
+    } catch { /* Tarayıcı çıkış kanal sayısını kendi seçebilir. */ }
+
+    highPass.type = 'highpass';
+    highPass.frequency.value = isolationMode === 'strong' ? 85 : 75;
+    highPass.Q.value = isolationMode === 'strong' ? 0.75 : 0.7;
+
+    lowPass.type = 'lowpass';
+    lowPass.frequency.value = isolationMode === 'strong' ? 15000 : 15000;
+    lowPass.Q.value = 0.55;
+
+    compressor.threshold.value = isolationMode === 'strong' ? -24 : -26;
+    compressor.knee.value = isolationMode === 'strong' ? 18 : 20;
+    compressor.ratio.value = isolationMode === 'strong' ? 3 : 3;
+    compressor.attack.value = 0.004;
+    compressor.release.value = isolationMode === 'strong' ? 0.2 : 0.18;
+
+    presence.type = 'peaking';
+    presence.frequency.value = 2800;
+    presence.Q.value = 0.75;
+    presence.gain.value = isolationMode === 'strong' ? 1.5 : 1.2;
+    outputGain.gain.value = isolationMode === 'strong' ? 1.02 : 1;
+
+    source.connect(highPass);
+    let rnnoiseApplied = false;
+    let fallbackReason = '';
+    if (isolationMode === 'strong') {
+      const rnnoiseGain = context.createGain();
+      const fallbackGain = context.createGain();
+      nodes.push(rnnoiseGain, fallbackGain);
+      rnnoiseGain.gain.value = 0;
+      fallbackGain.gain.value = 1;
+
+      // RNNoise başlatılamazsa aynı AudioContext içindeki bypass yolu sesin
+      // kesilmesini önler. Hazır olunca iki yol kısa bir geçişle yer değiştirir.
+      highPass.connect(fallbackGain);
+      fallbackGain.connect(lowPass);
+
+      if (wantsRnnoise) {
+        const handleRuntimeFailure = (error) => {
+          if (!rnnoiseApplied || context.state === 'closed') return;
+          const now = context.currentTime;
+          rnnoiseGain.gain.cancelScheduledValues(now);
+          fallbackGain.gain.cancelScheduledValues(now);
+          rnnoiseGain.gain.setTargetAtTime(0, now, 0.015);
+          fallbackGain.gain.setTargetAtTime(1, now, 0.015);
+          rnnoiseApplied = false;
+          onRnnoiseRuntimeError?.(error);
+        };
+
+        try {
+          rnnoiseSession = await createRnnoiseProcessor(context, {
+            onProcessorError: handleRuntimeFailure,
+          });
+          nodes.push(rnnoiseSession.node);
+          highPass.connect(rnnoiseSession.node);
+          rnnoiseSession.node.connect(rnnoiseGain);
+          rnnoiseGain.connect(lowPass);
+          const now = context.currentTime;
+          rnnoiseApplied = true;
+          rnnoiseGain.gain.setTargetAtTime(1, now, 0.015);
+          fallbackGain.gain.setTargetAtTime(0, now, 0.015);
+        } catch (error) {
+          fallbackReason = error?.message || 'RNNoise başlatılamadı.';
+          rnnoiseSession?.destroy();
+          rnnoiseSession = null;
+        }
+      } else {
+        fallbackReason = 'AudioWorklet/WebAssembly desteği bulunamadı.';
+      }
+
+      lowPass.connect(compressor);
+    } else {
+      highPass.connect(lowPass);
+      lowPass.connect(compressor);
+    }
+
+    compressor.connect(presence);
+    presence.connect(outputGain);
+    outputGain.connect(destination);
+    if (context.state !== 'running') {
+      // Bazı tarayıcılar kullanıcı hareketi dışında oluşturulan AudioContext'i
+      // askıda bırakır. Askıda bir işleme zinciri sessiz bir WebRTC izi üretir;
+      // kısa süre içinde başlayamazsa üst katman ham mikrofon akışına düşer.
+      await Promise.race([
+        context.resume().catch(() => {}),
+        new Promise(resolve => window.setTimeout(resolve, 750)),
+      ]);
+      if (context.state !== 'running') {
+        throw new Error('Web Audio işleme zinciri başlatılamadı.');
+      }
+    }
+
+    const outputTrack = destination.stream.getAudioTracks()[0];
+    if (!outputTrack) throw new Error('İşlenmiş mikrofon izi oluşturulamadı.');
+    try { outputTrack.contentHint = 'speech'; } catch { /* Bazı tarayıcılar salt okunur uygular. */ }
+
+    return {
+      outputStream: new MediaStream([outputTrack]),
+      context,
+      nodes,
+      disposeProcessor: () => rnnoiseSession?.destroy(),
+      rnnoiseApplied,
+      fallbackReason,
+      processingEngine: rnnoiseApplied ? 'rnnoise' : 'web-audio',
+    };
+  } catch (error) {
+    rnnoiseSession?.destroy();
+    nodes.forEach(node => {
+      try { node.disconnect?.(); } catch { /* Bağlı olmayan düğüm. */ }
+    });
+    await context.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function enableNativeVoiceProcessingFallback(stream) {
+  const track = stream?.getAudioTracks?.()[0];
+  if (!track?.applyConstraints) return false;
+  const supported = getSupportedMediaConstraints();
+  const constraints = {};
+  if (!supported || supported.echoCancellation) constraints.echoCancellation = true;
+  if (!supported || supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (!supported || supported.autoGainControl) constraints.autoGainControl = true;
+  try {
+    await track.applyConstraints(constraints);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function disposeVoiceProcessingSession(session = {}) {
+  try { session.disposeListeners?.(); } catch { /* Dinleyiciler zaten kaldırılmış olabilir. */ }
+  try { session.disposeProcessor?.(); } catch { /* İşlemci zaten kapanmış olabilir. */ }
+  (session.nodes || []).forEach(node => {
+    try { node.disconnect?.(); } catch { /* Bağlı olmayan düğüm. */ }
+  });
+  stopStream(session.outputStream);
+  if (session.rawStream && session.rawStream !== session.outputStream) stopStream(session.rawStream);
+  session.context?.close?.().catch(() => {});
+}
+
 export const VoiceProvider = ({ children }) => {
   const { user } = useAuth();
   const { socket } = useSocket();
@@ -65,6 +349,8 @@ export const VoiceProvider = ({ children }) => {
   const [cameraStream, setCameraStream] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({});
+  const [remoteVideoStreams, setRemoteVideoStreams] = useState({});
+  const [isVoiceViewOpen, setIsVoiceViewOpen] = useState(false);
   const [voiceChannelMembers, setVoiceChannelMembers] = useState({});
   const [voiceParticipants, setVoiceParticipants] = useState({});
   const [speakingUserIds, setSpeakingUserIds] = useState({});
@@ -81,7 +367,11 @@ export const VoiceProvider = ({ children }) => {
   const [voiceMode, setVoiceModeState] = useState(() => localStorage.getItem('voice:mode') || 'activity');
   const [pushToTalkKey, setPushToTalkKeyState] = useState(() => localStorage.getItem('voice:ptt-key') || 'Space');
   const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
-  const [noiseSuppression, setNoiseSuppressionState] = useState(() => localStorage.getItem('voice:noise-suppression') !== 'false');
+  const [voiceIsolationMode, setVoiceIsolationModeState] = useState(getInitialVoiceIsolationMode);
+  const [audioQuality, setAudioQualityState] = useState(() => normalizeAudioQuality(localStorage.getItem('voice:audio-quality')));
+  const [voiceProcessingStatus, setVoiceProcessingStatus] = useState('idle');
+  const [effectiveVoiceIsolationMode, setEffectiveVoiceIsolationMode] = useState('off');
+  const [voiceProcessingEngine, setVoiceProcessingEngine] = useState('none');
   const [screenSharePreset, setScreenSharePreset] = useState(() => localStorage.getItem('voice:screen-preset') || '1080p30');
 
   const userRef = useRef(user);
@@ -92,11 +382,17 @@ export const VoiceProvider = ({ children }) => {
   const isInVoiceRef = useRef(false);
   const voiceCapabilitiesRef = useRef(DEFAULT_CAPABILITIES);
   const audioStreamRef = useRef(null);
+  const sourceAudioStreamRef = useRef(null);
+  const audioProcessingSessionRef = useRef(null);
+  const microphoneRequestIdRef = useRef(0);
   const cameraStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
   const callsRef = useRef({});
+  const incomingVideoCallsRef = useRef({});
+  const outgoingVideoCallsRef = useRef({});
   const participantsRef = useRef({});
   const remoteStreamsRef = useRef({});
+  const remoteVideoStreamsRef = useRef({});
   const isMutedRef = useRef(false);
   const isDeafenedRef = useRef(false);
   const leaveVoiceChannelRef = useRef(() => {});
@@ -107,11 +403,31 @@ export const VoiceProvider = ({ children }) => {
   const cameraDeviceIdRef = useRef(cameraDeviceId);
   const voiceModeRef = useRef(voiceMode);
   const pushToTalkActiveRef = useRef(false);
-  const noiseSuppressionRef = useRef(noiseSuppression);
+  const voiceIsolationModeRef = useRef(voiceIsolationMode);
+  const audioQualityRef = useRef(audioQuality);
+
+  const AudioContextClass = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+  const webAudioProcessingSupported = Boolean(
+    AudioContextClass
+    && AudioContextClass.prototype?.createMediaStreamSource
+    && AudioContextClass.prototype?.createMediaStreamDestination,
+  );
+  const nativeVoiceIsolationSupported = Boolean(getSupportedMediaConstraints()?.voiceIsolation);
+  const rnnoiseSupported = isRnnoiseRuntimeSupported();
+  const audioProcessingSupported = webAudioProcessingSupported || nativeVoiceIsolationSupported || rnnoiseSupported;
+  const noiseSuppression = voiceIsolationMode !== 'off';
 
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+
+  useEffect(() => {
+    // Çıkış yapıldığında VoiceProvider yaşamaya devam edebilir. Mikrofon,
+    // RNNoise worklet'i ve Peer çağrıları kullanıcı oturumu ile birlikte kapanır.
+    if (!user?.id && isInVoiceRef.current) {
+      leaveVoiceChannelRef.current({ notifyServer: false });
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     socketRef.current = socket;
@@ -122,7 +438,16 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => { cameraDeviceIdRef.current = cameraDeviceId; localStorage.setItem('voice:camera-device', cameraDeviceId); }, [cameraDeviceId]);
   useEffect(() => { voiceModeRef.current = voiceMode; localStorage.setItem('voice:mode', voiceMode); }, [voiceMode]);
   useEffect(() => { localStorage.setItem('voice:ptt-key', pushToTalkKey); }, [pushToTalkKey]);
-  useEffect(() => { noiseSuppressionRef.current = noiseSuppression; localStorage.setItem('voice:noise-suppression', String(noiseSuppression)); }, [noiseSuppression]);
+  useEffect(() => {
+    voiceIsolationModeRef.current = voiceIsolationMode;
+    localStorage.setItem('voice:isolation-mode', voiceIsolationMode);
+    // Eski arayüz/kurulumlarla geriye uyumluluk.
+    localStorage.setItem('voice:noise-suppression', String(voiceIsolationMode !== 'off'));
+  }, [voiceIsolationMode]);
+  useEffect(() => {
+    audioQualityRef.current = audioQuality;
+    localStorage.setItem('voice:audio-quality', audioQuality);
+  }, [audioQuality]);
   useEffect(() => { localStorage.setItem('voice:screen-preset', screenSharePreset); }, [screenSharePreset]);
 
   useEffect(() => {
@@ -178,10 +503,6 @@ export const VoiceProvider = ({ children }) => {
   const createOutgoingStream = () => {
     const stream = new MediaStream();
     audioStreamRef.current?.getAudioTracks().forEach((track) => stream.addTrack(track));
-
-    // Aynı anda tek video kaynağı gönderilir: ekran paylaşımı kameraya önceliklidir.
-    const videoSource = screenStreamRef.current || cameraStreamRef.current;
-    videoSource?.getVideoTracks().forEach((track) => stream.addTrack(track));
     return stream;
   };
 
@@ -200,6 +521,28 @@ export const VoiceProvider = ({ children }) => {
       remoteStreamsRef.current = updated;
       return updated;
     });
+  };
+
+  const removeRemoteVideo = (userId) => {
+    const normalizedUserId = String(userId || '');
+    setRemoteVideoStreams((previous) => {
+      if (!previous[normalizedUserId]) return previous;
+      const updated = { ...previous };
+      delete updated[normalizedUserId];
+      remoteVideoStreamsRef.current = updated;
+      return updated;
+    });
+  };
+
+  const closeVideoCallsForUser = (userId) => {
+    const normalizedUserId = String(userId || '');
+    const incoming = incomingVideoCallsRef.current[normalizedUserId];
+    const outgoing = outgoingVideoCallsRef.current[normalizedUserId];
+    delete incomingVideoCallsRef.current[normalizedUserId];
+    delete outgoingVideoCallsRef.current[normalizedUserId];
+    incoming?.close();
+    outgoing?.close();
+    removeRemoteVideo(normalizedUserId);
   };
 
   const addVoiceParticipant = (participant) => {
@@ -227,13 +570,35 @@ export const VoiceProvider = ({ children }) => {
     });
   };
 
+  const applyAudioQualityToCall = async (call) => {
+    const peerConnection = call?.peerConnection;
+    if (!peerConnection?.getSenders) return;
+
+    const { maxBitrate } = AUDIO_QUALITY_CONFIG[audioQualityRef.current] || AUDIO_QUALITY_CONFIG.high;
+    const audioSenders = peerConnection.getSenders().filter(sender => sender.track?.kind === 'audio');
+    await Promise.all(audioSenders.map(async (sender) => {
+      if (!sender.getParameters || !sender.setParameters) return;
+      try {
+        const parameters = sender.getParameters();
+        if (!parameters.encodings?.length) parameters.encodings = [{}];
+        parameters.encodings = parameters.encodings.map(encoding => ({ ...encoding, maxBitrate }));
+        await sender.setParameters(parameters);
+      } catch (error) {
+        // Codec/bitrate tercihi desteklenmiyorsa WebRTC kendi uygun değerini seçer.
+        console.warn('Ses kalite profili WebRTC göndericisine uygulanamadı:', error);
+      }
+    }));
+  };
+
   const attachCall = (call, remoteUserId) => {
     const normalizedUserId = String(remoteUserId);
     const previousCall = callsRef.current[normalizedUserId];
     if (previousCall && previousCall !== call) previousCall.close();
     callsRef.current[normalizedUserId] = call;
+    void applyAudioQualityToCall(call);
 
     call.on('stream', (stream) => {
+      void applyAudioQualityToCall(call);
       // Arka planda sağırlaştırılmış kullanıcıların uzaktaki sesi de kapalı kalır.
       stream.getAudioTracks().forEach((track) => {
         track.enabled = !isDeafenedRef.current;
@@ -262,6 +627,20 @@ export const VoiceProvider = ({ children }) => {
     callsRef.current = {};
     remoteStreamsRef.current = {};
     setRemoteStreams({});
+  };
+
+  const closeAllVideoCalls = () => {
+    Object.values(incomingVideoCallsRef.current).forEach(call => call.close());
+    Object.values(outgoingVideoCallsRef.current).forEach(call => call.close());
+    incomingVideoCallsRef.current = {};
+    outgoingVideoCallsRef.current = {};
+    remoteVideoStreamsRef.current = {};
+    setRemoteVideoStreams({});
+  };
+
+  const closeOutgoingVideoCalls = () => {
+    Object.values(outgoingVideoCallsRef.current).forEach(call => call.close());
+    outgoingVideoCallsRef.current = {};
   };
 
   const callParticipant = (participant) => {
@@ -296,10 +675,78 @@ export const VoiceProvider = ({ children }) => {
     if (call) attachCall(call, remoteUserId);
   };
 
+  const callVideoParticipant = (participant, stream, mode) => {
+    const currentPeer = peerRef.current;
+    const activeChannel = activeVoiceChannelRef.current;
+    const localUser = userRef.current;
+    const remoteUserId = String(participant?.userId || '');
+    const knownParticipant = participantsRef.current[remoteUserId];
+
+    if (
+      !currentPeer
+      || !localUser?.id
+      || !isInVoiceRef.current
+      || !activeChannel?.id
+      || !stream?.getVideoTracks().some(track => track.readyState === 'live')
+      || !remoteUserId
+      || !knownParticipant?.peerId
+      || sameId(remoteUserId, localUser.id)
+    ) return;
+
+    outgoingVideoCallsRef.current[remoteUserId]?.close();
+    const call = currentPeer.call(knownParticipant.peerId, stream, {
+      metadata: {
+        userId: String(localUser.id),
+        channelId: String(activeChannel.id),
+        mediaKind: 'video',
+        mode,
+      },
+    });
+    if (!call) return;
+
+    outgoingVideoCallsRef.current[remoteUserId] = call;
+    const removeCall = () => {
+      if (outgoingVideoCallsRef.current[remoteUserId] === call) {
+        delete outgoingVideoCallsRef.current[remoteUserId];
+      }
+    };
+    call.on('close', removeCall);
+    call.on('error', removeCall);
+  };
+
+  const broadcastVideoStream = (stream, mode) => {
+    closeOutgoingVideoCalls();
+    Object.values(participantsRef.current).forEach(participant => {
+      callVideoParticipant(participant, stream, mode);
+    });
+  };
+
+  const sendCurrentVideoToParticipant = (participant) => {
+    const mode = getCurrentVideoMode();
+    const stream = mode === 'screen' ? screenStreamRef.current : cameraStreamRef.current;
+    if (mode !== 'none' && stream) callVideoParticipant(participant, stream, mode);
+  };
+
+  const reconnectAudioCall = (participant) => {
+    const localUserId = String(userRef.current?.id || '');
+    const remoteUserId = String(participant?.userId || '');
+
+    // Ses çağrısının tek sahibi küçük kullanıcı kimliğine sahip taraftır.
+    // Mikrofon sonradan hazır olduğunda iki tarafın da aynı çağrıyı kapatması,
+    // yeni kurulan çağrının yarış nedeniyle yeniden kapanmasına yol açabiliyor.
+    if (!localUserId || !remoteUserId || localUserId >= remoteUserId) return;
+
+    const previousCall = callsRef.current[remoteUserId];
+    if (previousCall) {
+      delete callsRef.current[remoteUserId];
+      previousCall.close();
+      removeRemoteUser(remoteUserId);
+    }
+    callParticipant(participant);
+  };
+
   const reconnectCalls = () => {
-    const participants = Object.values(participantsRef.current);
-    closeAllCalls();
-    participants.forEach(callParticipant);
+    Object.values(participantsRef.current).forEach(reconnectAudioCall);
   };
 
   const emitWithAck = (event, payload, timeout = 7000) => new Promise((resolve) => {
@@ -330,9 +777,19 @@ export const VoiceProvider = ({ children }) => {
   };
 
   const releaseMicrophone = () => {
-    stopStream(audioStreamRef.current);
+    microphoneRequestIdRef.current += 1;
+    const currentSession = audioProcessingSessionRef.current || {
+      outputStream: audioStreamRef.current,
+      rawStream: sourceAudioStreamRef.current,
+    };
+    audioProcessingSessionRef.current = null;
     audioStreamRef.current = null;
+    sourceAudioStreamRef.current = null;
+    disposeVoiceProcessingSession(currentSession);
     setMyStream(null);
+    setVoiceProcessingStatus('idle');
+    setEffectiveVoiceIsolationMode('off');
+    setVoiceProcessingEngine('none');
   };
 
   const getCurrentVideoMode = () => {
@@ -349,11 +806,12 @@ export const VoiceProvider = ({ children }) => {
     setIsServerMuted(next.serverMuted);
     setIsServerDeafened(next.serverDeafened);
 
-    let streamChanged = false;
+    let audioChanged = false;
+    let videoChanged = false;
     if (!next.canSpeak || next.serverMuted) {
       if (audioStreamRef.current) {
         releaseMicrophone();
-        streamChanged = true;
+        audioChanged = true;
       }
       isMutedRef.current = true;
       setIsMuted(true);
@@ -366,7 +824,8 @@ export const VoiceProvider = ({ children }) => {
       screenStreamRef.current = null;
       setCameraStream(null);
       setScreenStream(null);
-      streamChanged = true;
+      closeOutgoingVideoCalls();
+      videoChanged = true;
     }
 
     if (next.serverDeafened) {
@@ -375,10 +834,10 @@ export const VoiceProvider = ({ children }) => {
       setIsDeafened(true);
     }
 
-    if (streamChanged && isInVoiceRef.current) {
-      reconnectCalls();
+    if ((audioChanged || videoChanged) && isInVoiceRef.current) {
+      if (audioChanged) reconnectCalls();
       const activeChannel = activeVoiceChannelRef.current;
-      if (activeChannel?.id && socketRef.current?.connected) {
+      if (videoChanged && activeChannel?.id && socketRef.current?.connected) {
         void notifyStreamChanged(activeChannel.id, { kind: 'video', mode: getCurrentVideoMode() });
       }
     }
@@ -403,15 +862,32 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  const ensureMicrophone = async ({ skipCapabilityRefresh = false } = {}) => {
+  const ensureMicrophone = async ({ skipCapabilityRefresh = false, forceReplace = false } = {}) => {
     const activeChannel = activeVoiceChannelRef.current;
     if (!isInVoiceRef.current || !activeChannel?.id) return false;
+    const previousOutgoingStream = audioStreamRef.current;
+    const previousRawStream = sourceAudioStreamRef.current;
+    const hasPreviousStream = hasLiveAudioTrack(previousOutgoingStream);
+    const previousSession = hasPreviousStream
+      ? (audioProcessingSessionRef.current || {
+        outputStream: previousOutgoingStream,
+        rawStream: previousRawStream,
+      })
+      : null;
+    const previousEffectiveMode = previousSession?.effectiveMode || effectiveVoiceIsolationMode;
+    const previousProcessingStatus = previousSession?.processingStatus || voiceProcessingStatus;
+    const previousProcessingEngine = previousSession?.processingEngine || voiceProcessingEngine;
+    const requestId = microphoneRequestIdRef.current + 1;
+    microphoneRequestIdRef.current = requestId;
+    setVoiceProcessingStatus('starting');
 
     let capabilities = voiceCapabilitiesRef.current;
     if (!skipCapabilityRefresh) {
       const result = await requestVoiceCapabilities(activeChannel.id);
+      if (requestId !== microphoneRequestIdRef.current) return false;
       if (!result?.success) {
         setVoiceError(result?.error || 'Ses yetkilerin doğrulanamadı.');
+        setVoiceProcessingStatus('error');
         return false;
       }
       capabilities = normalizeCapabilities(result.capabilities);
@@ -419,57 +895,175 @@ export const VoiceProvider = ({ children }) => {
 
     if (!capabilities.canSpeak) {
       setVoiceError('Bu ses kanalında konuşma yetkin yok. Dinleyici olarak bağlısın.');
+      setVoiceProcessingStatus('idle');
       return false;
     }
     if (capabilities.serverMuted) {
       setVoiceError('Mikrofonun bir moderatör tarafından susturuldu.');
+      setVoiceProcessingStatus('idle');
       return false;
     }
 
-    if (hasLiveAudioTrack(audioStreamRef.current)) {
+    if (hasPreviousStream && !forceReplace) {
       audioStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
       });
+      setVoiceProcessingStatus('active');
       return true;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          ...(inputDeviceIdRef.current ? { deviceId: { exact: inputDeviceIdRef.current } } : {}),
-          echoCancellation: true,
-          noiseSuppression: noiseSuppressionRef.current,
-          autoGainControl: true,
-        },
-        video: false,
+      const isolationMode = voiceIsolationModeRef.current;
+      const quality = audioQualityRef.current;
+      const capture = await captureMicrophone({
+        deviceId: inputDeviceIdRef.current,
+        isolationMode,
+        audioQuality: quality,
       });
-      if (!isInVoiceRef.current || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)) {
-        stopStream(stream);
+      const rawStream = capture.stream;
+      if (
+        requestId !== microphoneRequestIdRef.current
+        || !isInVoiceRef.current
+        || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)
+      ) {
+        stopStream(rawStream);
         return false;
       }
 
-      stream.getAudioTracks().forEach((track) => {
+      rawStream.getAudioTracks().forEach(track => {
+        try { track.contentHint = 'speech'; } catch { /* Bazı tarayıcılar salt okunur uygular. */ }
+      });
+
+      let processingSession;
+      let processingFallback = capture.usedConstraintFallback;
+      try {
+        processingSession = await createProcessedVoiceStream(rawStream, isolationMode, quality, {
+          onRnnoiseRuntimeError: (error) => {
+            const currentSession = audioProcessingSessionRef.current;
+            if (!currentSession || currentSession.rawStream !== rawStream) return;
+            currentSession.rnnoiseApplied = false;
+            currentSession.effectiveMode = 'standard';
+            currentSession.processingStatus = 'fallback';
+            currentSession.processingEngine = 'browser-fallback';
+            void enableNativeVoiceProcessingFallback(rawStream);
+            setEffectiveVoiceIsolationMode('standard');
+            setVoiceProcessingStatus('fallback');
+            setVoiceProcessingEngine('browser-fallback');
+            setVoiceError(`RNNoise çalışmayı durdurdu; standart gürültü azaltmaya geçildi${error?.message ? ` (${error.message})` : ''}.`);
+          },
+        });
+      } catch (processingError) {
+        console.warn('Ses izolasyonu Web Audio katmanına uygulanamadı; tarayıcı işlemesi kullanılıyor:', processingError);
+        processingFallback = true;
+        processingSession = {
+          outputStream: rawStream,
+          context: null,
+          nodes: [],
+          rnnoiseApplied: false,
+          processingEngine: 'browser-fallback',
+          fallbackReason: processingError?.message || 'Ses işleme zinciri başlatılamadı.',
+        };
+      }
+      processingSession.rawStream = rawStream;
+      const rawTrack = rawStream.getAudioTracks()[0];
+      if (rawTrack?.addEventListener) {
+        const handleUnexpectedTrackEnd = () => {
+          if (audioProcessingSessionRef.current !== processingSession || !isInVoiceRef.current) return;
+          setVoiceError('Mikrofon bağlantısı kesildi; yeniden bağlanılıyor…');
+          releaseMicrophone();
+          void ensureMicrophone({ skipCapabilityRefresh: true, forceReplace: true });
+        };
+        rawTrack.addEventListener('ended', handleUnexpectedTrackEnd);
+        processingSession.disposeListeners = () => rawTrack.removeEventListener('ended', handleUnexpectedTrackEnd);
+      }
+
+      if (isolationMode === 'strong' && !processingSession.rnnoiseApplied) {
+        processingFallback = true;
+        processingSession.processingEngine = 'browser-fallback';
+        await enableNativeVoiceProcessingFallback(rawStream);
+      }
+
+      if (
+        requestId !== microphoneRequestIdRef.current
+        || !isInVoiceRef.current
+        || !sameId(activeVoiceChannelRef.current?.id, activeChannel.id)
+      ) {
+        disposeVoiceProcessingSession(processingSession);
+        return false;
+      }
+
+      const outgoingStream = processingSession.outputStream;
+      const nextEffectiveMode = isolationMode === 'strong' && !processingSession.rnnoiseApplied
+        ? 'standard'
+        : isolationMode;
+      const nextProcessingStatus = processingFallback ? 'fallback' : 'active';
+      const nextProcessingEngine = processingSession.processingEngine
+        || (nextEffectiveMode === 'off' ? 'none' : 'web-audio');
+      processingSession.effectiveMode = nextEffectiveMode;
+      processingSession.processingStatus = nextProcessingStatus;
+      processingSession.processingEngine = nextProcessingEngine;
+      outgoingStream.getAudioTracks().forEach((track) => {
         track.enabled = !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
       });
-      audioStreamRef.current = stream;
-      setMyStream(stream);
+      sourceAudioStreamRef.current = rawStream;
+      audioProcessingSessionRef.current = processingSession;
+      audioStreamRef.current = outgoingStream;
+      setMyStream(outgoingStream);
+      setEffectiveVoiceIsolationMode(nextEffectiveMode);
+      setVoiceProcessingStatus(nextProcessingStatus);
+      setVoiceProcessingEngine(nextProcessingEngine);
 
       const result = await notifyStreamChanged(activeChannel.id, {
         kind: 'audio',
         enabled: !isMutedRef.current && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current),
       });
       if (!result?.success) {
-        releaseMicrophone();
+        if (hasPreviousStream) {
+          sourceAudioStreamRef.current = previousRawStream;
+          audioProcessingSessionRef.current = previousSession;
+          audioStreamRef.current = previousOutgoingStream;
+          setMyStream(previousOutgoingStream);
+          setEffectiveVoiceIsolationMode(previousEffectiveMode);
+          setVoiceProcessingStatus(previousProcessingStatus === 'starting' ? 'active' : previousProcessingStatus);
+          setVoiceProcessingEngine(previousProcessingEngine);
+        } else {
+          sourceAudioStreamRef.current = null;
+          audioProcessingSessionRef.current = null;
+          audioStreamRef.current = null;
+          setMyStream(null);
+          setEffectiveVoiceIsolationMode('off');
+          setVoiceProcessingStatus('error');
+          setVoiceProcessingEngine('none');
+        }
+        disposeVoiceProcessingSession(processingSession);
         return false;
       }
 
+      if (capture.usedDefaultDevice) {
+        inputDeviceIdRef.current = '';
+        setInputDeviceId('');
+      }
+      if (previousSession && previousSession !== processingSession) {
+        disposeVoiceProcessingSession(previousSession);
+      }
       reconnectCalls();
       return true;
     } catch (error) {
+      if (requestId !== microphoneRequestIdRef.current) return false;
       if (error.name !== 'NotAllowedError') {
         console.error('Mikrofon erişim hatası:', error);
       }
-      setVoiceError('Mikrofon izni verilmedi veya mikrofon bulunamadı. Dinleyici olarak bağlı kalabilirsin.');
+      if (hasPreviousStream) {
+        setEffectiveVoiceIsolationMode(previousEffectiveMode);
+        setVoiceProcessingStatus(previousProcessingStatus === 'starting' ? 'active' : previousProcessingStatus);
+        setVoiceProcessingEngine(previousProcessingEngine);
+        setVoiceError('Yeni ses ayarı uygulanamadı; önceki mikrofon bağlantın kullanılmaya devam ediyor.');
+      } else {
+        setEffectiveVoiceIsolationMode('off');
+        setVoiceProcessingStatus('error');
+        setVoiceProcessingEngine('none');
+        setVoiceError('Mikrofon izni verilmedi veya mikrofon bulunamadı. Dinleyici olarak bağlı kalabilirsin.');
+      }
       return false;
     }
   };
@@ -484,7 +1078,7 @@ export const VoiceProvider = ({ children }) => {
     return true;
   };
 
-  const stopScreenShare = () => {
+  const stopScreenShare = ({ notify = true } = {}) => {
     const stream = screenStreamRef.current;
     if (!stream) return;
 
@@ -494,15 +1088,15 @@ export const VoiceProvider = ({ children }) => {
     });
     screenStreamRef.current = null;
     setScreenStream(null);
-    reconnectCalls();
+    closeOutgoingVideoCalls();
 
     const activeChannel = activeVoiceChannelRef.current;
-    if (activeChannel?.id && socketRef.current?.connected) {
+    if (notify && activeChannel?.id && socketRef.current?.connected) {
       void notifyStreamChanged(activeChannel.id, { kind: 'video', mode: getCurrentVideoMode() });
     }
   };
 
-  const stopCamera = () => {
+  const stopCamera = ({ notify = true } = {}) => {
     const stream = cameraStreamRef.current;
     if (!stream) return;
 
@@ -512,10 +1106,10 @@ export const VoiceProvider = ({ children }) => {
     });
     cameraStreamRef.current = null;
     setCameraStream(null);
-    reconnectCalls();
+    closeOutgoingVideoCalls();
 
     const activeChannel = activeVoiceChannelRef.current;
-    if (activeChannel?.id && socketRef.current?.connected) {
+    if (notify && activeChannel?.id && socketRef.current?.connected) {
       void notifyStreamChanged(activeChannel.id, { kind: 'video', mode: getCurrentVideoMode() });
     }
   };
@@ -542,8 +1136,9 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
 
+      if (screenStreamRef.current) stopScreenShare({ notify: false });
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) videoTrack.onended = stopCamera;
+      if (videoTrack) videoTrack.onended = () => stopCamera();
       cameraStreamRef.current = stream;
       setCameraStream(stream);
 
@@ -552,10 +1147,10 @@ export const VoiceProvider = ({ children }) => {
         mode: getCurrentVideoMode(),
       });
       if (!result?.success) {
-        stopCamera();
+        stopCamera({ notify: false });
         return;
       }
-      reconnectCalls();
+      broadcastVideoStream(stream, 'camera');
     } catch (error) {
       if (error.name !== 'NotAllowedError') console.error('Kamera erişim hatası:', error);
       setVoiceError('Kamera izni verilmedi veya kamera bulunamadı.');
@@ -586,8 +1181,9 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
 
+      if (cameraStreamRef.current) stopCamera({ notify: false });
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) videoTrack.onended = stopScreenShare;
+      if (videoTrack) videoTrack.onended = () => stopScreenShare();
       screenStreamRef.current = stream;
       setScreenStream(stream);
 
@@ -596,10 +1192,10 @@ export const VoiceProvider = ({ children }) => {
         mode: getCurrentVideoMode(),
       });
       if (!result?.success) {
-        stopScreenShare();
+        stopScreenShare({ notify: false });
         return;
       }
-      reconnectCalls();
+      broadcastVideoStream(stream, 'screen');
     } catch (error) {
       if (error.name !== 'NotAllowedError') {
         console.error('Ekran paylaşımı hatası:', error);
@@ -624,6 +1220,7 @@ export const VoiceProvider = ({ children }) => {
     }
 
     closeAllCalls();
+    closeAllVideoCalls();
     participantsRef.current = {};
     setVoiceParticipants({});
     setSpeakingUserIds({});
@@ -644,6 +1241,7 @@ export const VoiceProvider = ({ children }) => {
     setVoiceCapabilities(DEFAULT_CAPABILITIES);
     setIsInVoice(false);
     setActiveVoiceChannel(null);
+    setIsVoiceViewOpen(false);
   };
 
   const joinVoiceChannel = async (channel) => {
@@ -725,6 +1323,7 @@ export const VoiceProvider = ({ children }) => {
       // çağrılarını kapatır. Buradaki eski çağrıları da temizleyip yeniden
       // gelen katılımcı anlık görüntüsünden deterministik olarak kurarız.
       closeAllCalls();
+      closeAllVideoCalls();
       const result = await emitWithAck('voice:join', {
         channelId: activeChannel.id,
         peerId: peerIdRef.current,
@@ -804,11 +1403,16 @@ export const VoiceProvider = ({ children }) => {
   };
 
   const changeInputDevice = async (deviceId) => {
+    const previousDeviceId = inputDeviceIdRef.current;
     inputDeviceIdRef.current = deviceId;
     setInputDeviceId(deviceId);
-    if (!isInVoiceRef.current || !voiceCapabilitiesRef.current.canSpeak) return;
-    releaseMicrophone();
-    await ensureMicrophone({ skipCapabilityRefresh: true });
+    if (!isInVoiceRef.current || !voiceCapabilitiesRef.current.canSpeak || !audioStreamRef.current) return true;
+    const applied = await ensureMicrophone({ skipCapabilityRefresh: true, forceReplace: true });
+    if (!applied && inputDeviceIdRef.current === deviceId) {
+      inputDeviceIdRef.current = previousDeviceId;
+      setInputDeviceId(previousDeviceId);
+    }
+    return applied;
   };
 
   const changeCameraDevice = async (deviceId) => {
@@ -820,12 +1424,44 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
+  const restartMicrophoneForAudioSetting = async () => {
+    if (!isInVoiceRef.current || !audioStreamRef.current || !voiceCapabilitiesRef.current.canSpeak) return true;
+    return ensureMicrophone({ skipCapabilityRefresh: true, forceReplace: true });
+  };
+
+  const setVoiceIsolationMode = async (mode) => {
+    const normalized = normalizeVoiceIsolationMode(mode);
+    const previousMode = voiceIsolationModeRef.current;
+    if (previousMode === normalized) return true;
+    voiceIsolationModeRef.current = normalized;
+    setVoiceIsolationModeState(normalized);
+    const applied = await restartMicrophoneForAudioSetting();
+    if (!applied && voiceIsolationModeRef.current === normalized) {
+      voiceIsolationModeRef.current = previousMode;
+      setVoiceIsolationModeState(previousMode);
+    }
+    return applied;
+  };
+
+  const setAudioQuality = async (quality) => {
+    const normalized = normalizeAudioQuality(quality);
+    const previousQuality = audioQualityRef.current;
+    if (previousQuality === normalized) return true;
+    audioQualityRef.current = normalized;
+    setAudioQualityState(normalized);
+    const applied = await restartMicrophoneForAudioSetting();
+    if (!applied && audioQualityRef.current === normalized) {
+      audioQualityRef.current = previousQuality;
+      setAudioQualityState(previousQuality);
+    }
+    return applied;
+  };
+
   const setNoiseSuppression = async (enabled) => {
-    noiseSuppressionRef.current = Boolean(enabled);
-    setNoiseSuppressionState(Boolean(enabled));
-    if (!isInVoiceRef.current || !audioStreamRef.current) return;
-    releaseMicrophone();
-    await ensureMicrophone({ skipCapabilityRefresh: true });
+    const nextMode = enabled
+      ? (voiceIsolationModeRef.current === 'off' ? 'standard' : voiceIsolationModeRef.current)
+      : 'off';
+    return setVoiceIsolationMode(nextMode);
   };
 
   // PeerJS nesnesi tüm ses oturumu boyunca tek kalır. Gelen çağrılar sadece
@@ -872,6 +1508,33 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
 
+      if (call.metadata?.mediaKind === 'video') {
+        const previousCall = incomingVideoCallsRef.current[remoteUserId];
+        if (previousCall && previousCall !== call) previousCall.close();
+        incomingVideoCallsRef.current[remoteUserId] = call;
+        const mode = call.metadata?.mode === 'screen' ? 'screen' : 'camera';
+
+        call.answer();
+        call.on('stream', (stream) => {
+          if (!stream?.getVideoTracks().length) return;
+          setRemoteVideoStreams((previous) => {
+            const updated = { ...previous, [remoteUserId]: { stream, mode } };
+            remoteVideoStreamsRef.current = updated;
+            return updated;
+          });
+        });
+
+        const removeVideoCall = () => {
+          if (incomingVideoCallsRef.current[remoteUserId] === call) {
+            delete incomingVideoCallsRef.current[remoteUserId];
+            removeRemoteVideo(remoteUserId);
+          }
+        };
+        call.on('close', removeVideoCall);
+        call.on('error', removeVideoCall);
+        return;
+      }
+
       call.answer(createOutgoingStream());
       attachCall(call, remoteUserId);
     });
@@ -907,6 +1570,7 @@ export const VoiceProvider = ({ children }) => {
         delete callsRef.current[userId];
       }
       callParticipant(participant);
+      sendCurrentVideoToParticipant(participant);
     };
 
     const handleExistingUsers = (payload) => {
@@ -926,6 +1590,7 @@ export const VoiceProvider = ({ children }) => {
           delete callsRef.current[userId];
         }
         callParticipant(participant);
+        sendCurrentVideoToParticipant(participant);
       });
     };
 
@@ -935,18 +1600,39 @@ export const VoiceProvider = ({ children }) => {
       callsRef.current[normalizedUserId]?.close();
       delete callsRef.current[normalizedUserId];
       removeRemoteUser(normalizedUserId);
+      closeVideoCallsForUser(normalizedUserId);
       removeVoiceParticipant(normalizedUserId);
     };
 
-    const handleStreamChanged = ({ userId, channelId } = {}) => {
+    const handleStreamChanged = ({ userId, channelId, kind, mode } = {}) => {
       if (channelId && !sameId(channelId, activeVoiceChannelRef.current?.id)) return;
       const normalizedUserId = String(userId || '');
       const participant = participantsRef.current[normalizedUserId];
       if (!participant) return;
+      if (sameId(normalizedUserId, userRef.current?.id)) return;
 
-      callsRef.current[normalizedUserId]?.close();
-      delete callsRef.current[normalizedUserId];
-      callParticipant(participant);
+      if (kind === 'audio') {
+        // Mikrofon akışı değişen taraf çağrının sahibi değilse, sahibi olan bu
+        // istemci ses çağrısını yeni track ile tekrar kurar. Video çağrıları
+        // ayrı tutulduğu için bu işlem kamera/yayını etkilemez.
+        reconnectAudioCall(participant);
+        return;
+      }
+
+      if (kind === 'video') {
+        const normalizedMode = mode === 'screen' || mode === 'camera' ? mode : 'none';
+        const updatedParticipant = { ...participant, streamMode: normalizedMode };
+        participantsRef.current[normalizedUserId] = updatedParticipant;
+        setVoiceParticipants(previous => ({
+          ...previous,
+          [normalizedUserId]: { ...previous[normalizedUserId], streamMode: normalizedMode },
+        }));
+        if (normalizedMode === 'none') {
+          incomingVideoCallsRef.current[normalizedUserId]?.close();
+          delete incomingVideoCallsRef.current[normalizedUserId];
+          removeRemoteVideo(normalizedUserId);
+        }
+      }
     };
 
     const handleChannelMembers = ({ channelId, members } = {}) => {
@@ -1139,6 +1825,10 @@ export const VoiceProvider = ({ children }) => {
         cameraStream,
         screenStream,
         remoteStreams,
+        remoteVideoStreams,
+        isVoiceViewOpen,
+        setIsVoiceViewOpen,
+        toggleVoiceView: () => setIsVoiceViewOpen(open => !open),
         voiceChannelMembers,
         requestVoiceChannelMembers,
         voiceParticipants: Object.values(voiceParticipants),
@@ -1161,6 +1851,17 @@ export const VoiceProvider = ({ children }) => {
         voiceMode,
         pushToTalkKey,
         isPushToTalkActive,
+        voiceIsolationMode,
+        effectiveVoiceIsolationMode,
+        voiceProcessingStatus,
+        audioProcessingSupported,
+        webAudioProcessingSupported,
+        nativeVoiceIsolationSupported,
+        rnnoiseSupported,
+        voiceProcessingEngine,
+        audioQuality,
+        voiceIsolationModes: VOICE_ISOLATION_MODES,
+        audioQualityPresets: AUDIO_QUALITY_PRESETS,
         noiseSuppression,
         screenSharePreset,
         joinVoiceChannel,
@@ -1174,6 +1875,8 @@ export const VoiceProvider = ({ children }) => {
         changeCameraDevice,
         setVoiceMode,
         setPushToTalkKey,
+        setVoiceIsolationMode,
+        setAudioQuality,
         setNoiseSuppression,
         setScreenSharePreset,
       }}
