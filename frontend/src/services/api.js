@@ -15,6 +15,12 @@ async function request(endpoint, options = {}) {
   return response.json();
 }
 
+export const fetchGifs = (query = '', limit = 24) => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (query.trim()) params.set('query', query.trim());
+  return request(`/gifs?${params}`);
+};
+
 // Auth
 export const loginUser = (data) =>
   request('/auth/login', {

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ServerProvider, useServer } from './context/ServerContext';
@@ -13,6 +13,7 @@ import ChannelList from './components/layout/ChannelList';
 import ChatArea from './components/layout/ChatArea';
 import MemberList from './components/layout/MemberList';
 import VoicePanel from './components/voice/VoicePanel';
+import VoiceRoomView from './components/voice/VoiceRoomView';
 import DMList from './components/dm/DMList';
 import DMArea from './components/dm/DMArea';
 import FriendsList from './components/friends/FriendsList';
@@ -26,8 +27,17 @@ function AppContent() {
   const { user } = useAuth();
   const { socket } = useSocket();
   const { currentServer, currentChannel, setCurrentServer, setCurrentChannel, setServers } = useServer();
-  const { activeVoiceChannel, leaveVoiceChannel } = useVoice();
+  const { activeVoiceChannel, isInVoice, isVoiceViewOpen, setIsVoiceViewOpen, leaveVoiceChannel } = useVoice();
   const [viewMode, setViewMode] = useState('dms'); 
+
+  const closeVoiceViewForNavigation = useCallback(() => {
+    setIsVoiceViewOpen(false);
+  }, [setIsVoiceViewOpen]);
+
+  const navigateToView = useCallback((nextViewMode) => {
+    closeVoiceViewForNavigation();
+    setViewMode(nextViewMode);
+  }, [closeVoiceViewForNavigation]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -95,21 +105,23 @@ function AppContent() {
       <NotificationCenter />
       <OnboardingGate />
       
-      <ServerList viewMode={viewMode} setViewMode={setViewMode} />
+      <ServerList viewMode={viewMode} setViewMode={navigateToView} />
 
       <div className="flex flex-col w-[256px] bg-[#151b27] flex-shrink-0 overflow-hidden border-r border-white/[0.06]">
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           {viewMode === 'servers' ? (
-            currentServer ? <ChannelList /> : null
+            currentServer ? <ChannelList onNavigate={closeVoiceViewForNavigation} /> : null
           ) : (
-            <DMList setViewMode={setViewMode} />
+            <DMList setViewMode={navigateToView} />
           )}
         </div>
         <UserProfile />
       </div>
 
       <div className="flex flex-col flex-1 min-w-0 bg-[#111827] relative">
-        {viewMode === 'servers' ? (
+        {isInVoice && isVoiceViewOpen ? (
+          <VoiceRoomView />
+        ) : viewMode === 'servers' ? (
           currentChannel ? (
             <>
               <NsfwGate channel={currentChannel}>{currentChannel.type === 'forum' ? <ForumArea /> : <ChatArea />}</NsfwGate>
@@ -134,7 +146,7 @@ function AppContent() {
         <VoicePanel />
       </div>
 
-      {viewMode === 'servers' && currentChannel && (
+      {!isVoiceViewOpen && viewMode === 'servers' && currentChannel && (
         <div className="flex flex-col w-[256px] bg-[#151b27] flex-shrink-0 border-l border-white/[0.06]">
           <MemberList />
         </div>

@@ -329,18 +329,44 @@ function InvitesTab({ serverId, payload, refresh }) {
 function EventsTab({ serverId, payload, userId, canManage, refresh }) {
   const events = asArray(payload, ['events']);
   const [form, setForm] = useState({ name: '', description: '', startsAt: '', location: '' });
-  const submit = async event => { event.preventDefault(); try { await createEvent(serverId, { ...form, startsAt: new Date(form.startsAt).getTime() }); setForm({ name: '', description: '', startsAt: '', location: '' }); toast.success('Etkinlik oluşturuldu.'); refresh(); } catch (error) { toast.error(error.message); } };
+  const [submitting, setSubmitting] = useState(false);
+  const minimumStart = useMemo(() => {
+    const date = new Date(Date.now() + 60_000);
+    date.setSeconds(0, 0);
+    const offset = date.getTimezoneOffset() * 60_000;
+    return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+  }, []);
+  const submit = async event => {
+    event.preventDefault();
+    const startsAt = new Date(form.startsAt).getTime();
+    if (!Number.isFinite(startsAt) || startsAt <= Date.now()) {
+      toast.error('Etkinlik için gelecekte bir başlangıç zamanı seç.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await createEvent(serverId, { ...form, startsAt, type: 'external' });
+      setForm({ name: '', description: '', startsAt: '', location: '' });
+      await refresh();
+      toast.success('Etkinlik oluşturuldu.');
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const choices = [
     ['going', 'Katılacağım'],
     ['interested', 'İlgileniyorum'],
     ['not_going', 'Katılmayacağım'],
   ];
   return <>
-    {canManage && <Panel title="Etkinlik planla" description="Üyeler katılım durumunu bildirebilir ve başlangıç saatini görebilir."><form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><input required maxLength={80} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={fieldClass} placeholder="Etkinlik adı" /><input type="datetime-local" required value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} className={fieldClass} /><input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className={fieldClass} placeholder="Konum veya ses kanalı" /><input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={fieldClass} placeholder="Açıklama" /><button className={`${primaryButton} md:col-span-2`}><CalendarDays className="h-4 w-4" /> Planla</button></form></Panel>}
+    {canManage && <Panel title="Etkinlik planla" description="Üyeler katılım durumunu bildirebilir ve başlangıç saatini görebilir."><form onSubmit={submit} className="grid gap-3 md:grid-cols-2"><input required maxLength={80} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={fieldClass} placeholder="Etkinlik adı" /><input type="datetime-local" min={minimumStart} required value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })} className={fieldClass} /><input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className={fieldClass} placeholder="Konum veya ses kanalı" /><input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className={fieldClass} placeholder="Açıklama" /><button disabled={submitting} className={`${primaryButton} md:col-span-2 disabled:cursor-not-allowed disabled:opacity-50`}><CalendarDays className="h-4 w-4" /> {submitting ? 'Oluşturuluyor…' : 'Planla'}</button></form></Panel>}
     <Panel title="Yaklaşan etkinlikler">{events.length === 0 ? <Empty>Planlanmış etkinlik yok.</Empty> : <div className="grid gap-3 md:grid-cols-2">{events.map(item => {
       const rsvps = item.rsvps || {};
-      const currentStatus = rsvps[userId] || item.currentUserStatus || null;
-      return <article key={item.id} className="rounded-xl border border-white/[0.07] bg-[#0f172a] p-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-[#2563eb]/15 p-2 text-[#60a5fa]"><CalendarDays className="h-5 w-5" /></div><div className="min-w-0"><h4 className="font-bold text-white">{item.name || item.title}</h4><p className="text-xs text-[#94a3b8]">{formatDate(item.startsAt || item.scheduledStartAt)}</p>{item.location && <p className="mt-1 truncate text-xs text-[#64748b]">{item.location}</p>}</div></div>{item.description && <p className="mt-3 text-sm text-[#cbd5e1]">{item.description}</p>}<div className="mt-3 flex flex-wrap gap-2">{choices.map(([status, label]) => { const count = Object.values(rsvps).filter(value => value === status).length; return <button key={status} className={currentStatus === status ? primaryButton : secondaryButton} onClick={() => rsvpEvent(serverId, item.id, status).then(refresh).catch(error => toast.error(error.message))}>{status === 'going' && <Check className="h-4 w-4" />}{label} ({count})</button>; })}{canManage && <button className="rounded-lg p-2 text-[#f87171] hover:bg-[#ef4444]/10" onClick={() => deleteEvent(serverId, item.id).then(refresh).catch(error => toast.error(error.message))}><Trash2 className="h-4 w-4" /></button>}</div></article>;
+      const statusOf = value => typeof value === 'string' ? value : value?.status || null;
+      const currentStatus = statusOf(rsvps[userId]) || item.currentUserStatus || null;
+      return <article key={item.id} className="rounded-xl border border-white/[0.07] bg-[#0f172a] p-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-[#2563eb]/15 p-2 text-[#60a5fa]"><CalendarDays className="h-5 w-5" /></div><div className="min-w-0"><h4 className="font-bold text-white">{item.name || item.title}</h4><p className="text-xs text-[#94a3b8]">{formatDate(item.startsAt || item.scheduledStartAt)}</p>{item.location && <p className="mt-1 truncate text-xs text-[#64748b]">{item.location}</p>}</div></div>{item.description && <p className="mt-3 text-sm text-[#cbd5e1]">{item.description}</p>}<div className="mt-3 flex flex-wrap gap-2">{choices.map(([status, label]) => { const count = Object.values(rsvps).filter(value => statusOf(value) === status).length; return <button type="button" key={status} className={currentStatus === status ? primaryButton : secondaryButton} onClick={() => rsvpEvent(serverId, item.id, status).then(refresh).catch(error => toast.error(error.message))}>{status === 'going' && <Check className="h-4 w-4" />}{label} ({count})</button>; })}{canManage && <button type="button" className="rounded-lg p-2 text-[#f87171] hover:bg-[#ef4444]/10" onClick={() => deleteEvent(serverId, item.id).then(refresh).catch(error => toast.error(error.message))}><Trash2 className="h-4 w-4" /></button>}</div></article>;
     })}</div>}</Panel>
   </>;
 }

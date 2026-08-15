@@ -516,16 +516,23 @@ router.post('/servers/:serverId/events', (req, res) => {
   const server = getServer(req, res, { permission: 'MANAGE_EVENTS' });
   if (!server) return undefined;
   try {
+    const startsAt = Number(req.body.scheduledStartAt ?? req.body.startsAt);
+    if (!Number.isFinite(startsAt) || startsAt <= Date.now()) {
+      return res.status(400).json({ error: 'Etkinlik başlangıcı gelecekte geçerli bir tarih olmalıdır.' });
+    }
     const event = platformService.createEvent(server.id, req.user.id, {
       name: text(req.body.name, 100),
       description: text(req.body.description, 2000),
       channelId: text(req.body.channelId, 100) || null,
       location: text(req.body.location, 200) || null,
-      startsAt: Number(req.body.scheduledStartAt ?? req.body.startsAt),
+      startsAt,
       endsAt: Number(req.body.scheduledEndAt ?? req.body.endsAt) || null,
       type: text(req.body.type, 20) || (req.body.channelId ? 'voice' : 'external'),
       image: text(req.body.image, 1000) || null,
     });
+    if (!event) {
+      return res.status(400).json({ error: 'Etkinlik bilgileri geçersiz. Başlangıç ve bitiş saatlerini kontrol et.' });
+    }
     audit(req, server.id, 'EVENT_CREATE', 'event', event.id);
     emitUpdate(req, server.id, 'events', 'created', event);
     return res.status(201).json(event);

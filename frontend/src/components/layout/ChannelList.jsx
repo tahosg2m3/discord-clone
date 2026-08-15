@@ -57,7 +57,7 @@ function getVoiceParticipantId(participant) {
   return participant?.userId || participant?.id || participant?.user?.id;
 }
 
-export default function ChannelList() {
+export default function ChannelList({ onNavigate }) {
   const { currentServer, currentChannel, setCurrentChannel, setServers, setCurrentServer } = useServer();
   const { socket } = useSocket();
   const { user } = useAuth();
@@ -238,6 +238,7 @@ export default function ChannelList() {
   };
 
   const handleChannelClick = (channel) => {
+    onNavigate?.();
     setUnreadByChannel(current => ({ ...current, [channel.id]: { count: 0, mentions: 0 } }));
     setCurrentChannel({ ...channel, previous: currentChannel?.id });
     if (channel.type === 'voice' || channel.type === 'stage') joinVoiceChannel(channel);

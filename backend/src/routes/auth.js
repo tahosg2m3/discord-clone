@@ -1,5 +1,4 @@
 const express = require('express');
-const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
@@ -9,6 +8,11 @@ const {
   sendPasswordResetCode,
   sendEmailChangeCode,
 } = require('../services/emailService');
+const {
+  hashPassword,
+  isPasswordWorkQueueError,
+  verifyPassword,
+} = require('../services/passwordService');
 const { requireAuth, signAuthToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -16,11 +20,148 @@ const router = express.Router();
 const pendingTwoFactorLogins = new Map();
 const pendingPasswordResets = new Map();
 const pendingEmailChanges = new Map();
+const authRateLimitEntries = new Map();
 
 const CODE_EXPIRES_IN_MS = 10 * 60 * 1000;
 const RESEND_WAIT_MS = 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
-const BCRYPT_ROUNDS = 12;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_RATE_LIMIT_ENTRIES = 10_000;
+// Kodlar kısa ve tek kullanımlı olduğundan Argon2 ile parola gibi işlenmez.
+// Süreç belleğinde kalan rastgele HMAC anahtarı, Map içindeki özetlerin çevrimdışı
+// 000000-999999 taramasına karşı doğrudan SHA-256'dan daha güvenli olmasını sağlar.
+// Uygulama yeniden başladığında bekleyen oturumlar zaten bellekten silinir.
+const CODE_HASH_KEY = crypto.randomBytes(32);
+const RATE_LIMIT_HASH_KEY = crypto.randomBytes(32);
+
+function cleanupExpiredSecurityState(now = Date.now()) {
+  [pendingTwoFactorLogins, pendingPasswordResets, pendingEmailChanges].forEach(map => {
+    for (const [key, pending] of map.entries()) {
+      if (!pending || now > pending.expiresAt) map.delete(key);
+    }
+  });
+
+  for (const [key, entry] of authRateLimitEntries.entries()) {
+    if (!entry || now >= entry.expiresAt) authRateLimitEntries.delete(key);
+  }
+}
+
+const securityCleanupTimer = setInterval(
+  cleanupExpiredSecurityState,
+  RATE_LIMIT_CLEANUP_INTERVAL_MS,
+);
+securityCleanupTimer.unref?.();
+
+function rateLimitSubject(value) {
+  const normalized = String(value ?? '').trim().toLowerCase().slice(0, 256);
+  return normalized || '<empty>';
+}
+
+function rateLimitKey(scope, kind, value) {
+  return crypto.createHmac('sha256', RATE_LIMIT_HASH_KEY)
+    .update(`${scope}:${kind}:${rateLimitSubject(value)}`)
+    .digest('hex');
+}
+
+function requestRemoteAddress(req) {
+  // X-Forwarded-For istemci tarafından taklit edilebilir. Açıkça güvenilir proxy
+  // yapılandırılmadığı için yalnız gerçek TCP bağlantısının adresini kullanırız.
+  return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
+}
+
+function authRateLimit({ scope, windowMs, ipLimit, accountLimit, accountKey }) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const subjects = [
+      { key: rateLimitKey(scope, 'ip', requestRemoteAddress(req)), limit: ipLimit },
+    ];
+    if (typeof accountKey === 'function') {
+      subjects.push({ key: rateLimitKey(scope, 'account', accountKey(req)), limit: accountLimit });
+    }
+
+    const uniqueSubjects = [...new Map(subjects.map(subject => [subject.key, subject])).values()];
+    const states = uniqueSubjects.map(subject => {
+      let entry = authRateLimitEntries.get(subject.key);
+      if (entry && now >= entry.expiresAt) {
+        authRateLimitEntries.delete(subject.key);
+        entry = null;
+      }
+      return { ...subject, entry };
+    });
+    const blocked = states.find(state => state.entry && state.entry.count >= state.limit);
+
+    if (blocked) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((blocked.entry.expiresAt - now) / 1000));
+      res.set('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        error: 'Çok fazla deneme yaptın. Lütfen biraz bekleyip yeniden dene.',
+      });
+    }
+
+    const newEntryCount = states.filter(state => !state.entry).length;
+    if (authRateLimitEntries.size + newEntryCount > MAX_RATE_LIMIT_ENTRIES) {
+      cleanupExpiredSecurityState(now);
+      if (authRateLimitEntries.size + newEntryCount > MAX_RATE_LIMIT_ENTRIES) {
+        res.set('Retry-After', '60');
+        return res.status(429).json({
+          error: 'Çok fazla deneme yaptın. Lütfen biraz bekleyip yeniden dene.',
+        });
+      }
+    }
+
+    states.forEach(state => {
+      if (state.entry) {
+        state.entry.count += 1;
+      } else {
+        authRateLimitEntries.set(state.key, { count: 1, expiresAt: now + windowMs });
+      }
+    });
+    return next();
+  };
+}
+
+const rateLimits = Object.freeze({
+  register: authRateLimit({
+    scope: 'register', windowMs: 60 * 60 * 1000, ipLimit: 12, accountLimit: 5,
+    accountKey: req => normalizeEmail(req.body?.email),
+  }),
+  login: authRateLimit({
+    scope: 'login', windowMs: 15 * 60 * 1000, ipLimit: 30, accountLimit: 10,
+    accountKey: req => normalizeEmail(req.body?.email),
+  }),
+  verifyTwoFactor: authRateLimit({
+    scope: 'verify-2fa', windowMs: 15 * 60 * 1000, ipLimit: 40, accountLimit: 8,
+    accountKey: req => req.body?.loginTicket,
+  }),
+  resendTwoFactor: authRateLimit({
+    scope: 'resend-2fa', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
+    accountKey: req => req.body?.loginTicket,
+  }),
+  requestPasswordReset: authRateLimit({
+    scope: 'request-password-reset', windowMs: 60 * 60 * 1000, ipLimit: 12, accountLimit: 5,
+    accountKey: req => normalizeEmail(req.body?.email),
+  }),
+  resendPasswordReset: authRateLimit({
+    scope: 'resend-password-reset', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
+    accountKey: req => req.body?.resetTicket,
+  }),
+  resetPassword: authRateLimit({
+    scope: 'reset-password', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 8,
+    accountKey: req => req.body?.resetTicket,
+  }),
+  requestEmailChange: authRateLimit({
+    scope: 'request-email-change', windowMs: 60 * 60 * 1000, ipLimit: 20, accountLimit: 6,
+    accountKey: req => req.user?.id,
+  }),
+  resendEmailChange: authRateLimit({
+    scope: 'resend-email-change', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
+    accountKey: req => req.body?.emailChangeTicket,
+  }),
+  confirmEmailChange: authRateLimit({
+    scope: 'confirm-email-change', windowMs: 15 * 60 * 1000, ipLimit: 30, accountLimit: 8,
+    accountKey: req => req.body?.emailChangeTicket,
+  }),
+});
 
 function publicUser(user) {
   const { password, tokenVersion, ...safeUser } = user;
@@ -42,7 +183,7 @@ function createSixDigitCode() {
 }
 
 function hashCode(code) {
-  return crypto.createHash('sha256').update(code).digest('hex');
+  return crypto.createHmac('sha256', CODE_HASH_KEY).update(String(code)).digest('hex');
 }
 
 function isCodeCorrect(receivedCode, storedCodeHash) {
@@ -51,10 +192,6 @@ function isCodeCorrect(receivedCode, storedCodeHash) {
 
   return receivedHash.length === storedHash.length
     && crypto.timingSafeEqual(receivedHash, storedHash);
-}
-
-function isBcryptHash(value) {
-  return typeof value === 'string' && /^\$2[aby]\$\d{2}\$/.test(value);
 }
 
 function isValidPassword(value) {
@@ -69,6 +206,14 @@ function emailDeliveryErrorMessage(error, fallback) {
   return error?.code === 'SMTP_CONFIG_ERROR' ? error.message : fallback;
 }
 
+function passwordWorkBusyResponse(error, res) {
+  if (!isPasswordWorkQueueError(error)) return null;
+  res.set('Retry-After', '2');
+  return res.status(503).json({
+    error: 'Güvenli parola işleme servisi şu anda yoğun. Lütfen kısa süre sonra yeniden dene.',
+  });
+}
+
 function findUserByEmail(email) {
   return storage.getUserByEmail(normalizeEmail(email));
 }
@@ -76,23 +221,19 @@ function findUserByEmail(email) {
 async function checkPasswordAndMigrate(user, password) {
   if (!user || typeof password !== 'string') return false;
 
-  let valid = false;
-  if (isBcryptHash(user.password)) {
-    valid = await bcrypt.compare(password, user.password);
-  } else {
-    const expected = Buffer.from(String(user.password || ''));
-    const supplied = Buffer.from(password);
-    valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  const result = await verifyPassword(password, user.password);
+  if (!result.valid) return false;
 
-    // Eski düz metin şifreler başarılı ilk girişte otomatik olarak bcrypt'e taşınır.
-    if (valid) {
-      storage.updateUserPassword(user.id, await bcrypt.hash(password, BCRYPT_ROUNDS), {
-        invalidateSessions: false,
-      });
-    }
+  // Bcrypt, eski Argon2 parametreleri ve çok eski düz metin kayıtları başarılı
+  // doğrulamanın hemen ardından Argon2id'e taşınır. Kullanıcı henüz yeni bir
+  // oturum almadığı için mevcut tokenVersion değiştirilmez.
+  if (result.needsRehash) {
+    storage.updateUserPassword(user.id, await hashPassword(password), {
+      invalidateSessions: false,
+    });
   }
 
-  return valid;
+  return true;
 }
 
 function createPendingCode(map, userId, extra = {}) {
@@ -107,6 +248,21 @@ function createPendingCode(map, userId, extra = {}) {
     ...extra,
   });
   return { ticket, code };
+}
+
+function createDecoyPasswordReset(ticket = uuidv4()) {
+  const now = Date.now();
+  pendingPasswordResets.set(ticket, {
+    userId: null,
+    decoy: true,
+    // Gerçek bir kod üretilmez veya gönderilmez. Rastgele özet, tahmin edilen
+    // hiçbir altı haneli kodla pratikte eşleşmez.
+    codeHash: crypto.randomBytes(32).toString('hex'),
+    expiresAt: now + CODE_EXPIRES_IN_MS,
+    lastSentAt: now,
+    attempts: 0,
+  });
+  return ticket;
 }
 
 function findPendingRegistration({ username, email }) {
@@ -229,7 +385,7 @@ async function resendPendingCode(map, ticket, sendCode, resolveRecipient = pendi
   return { pending };
 }
 
-router.post('/register', async (req, res) => {
+router.post('/register', rateLimits.register, async (req, res) => {
   try {
     const username = String(req.body.username || '').trim();
     const email = normalizeEmail(req.body.email);
@@ -245,7 +401,7 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'Bu kullanıcı adı veya e-posta adresi zaten kullanımda.' });
     }
 
-    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const passwordHash = await hashPassword(password);
     // SMTP teslimi başarısız olursa kullanıcı/veri üyeliği oluşmaz. Hesap yalnızca
     // e-postadaki kod doğrulandığında kalıcı olarak oluşturulur.
     const registrationResult = await sendRegistrationCode({ username, email, passwordHash });
@@ -257,6 +413,8 @@ router.post('/register', async (req, res) => {
       message: 'Kayıt başarılı. Doğrulama kodu e-posta adresine gönderildi.',
     });
   } catch (error) {
+    const busyResponse = passwordWorkBusyResponse(error, res);
+    if (busyResponse) return busyResponse;
     console.error('Kayıt doğrulama hatası:', error.message);
     return res.status(503).json({
       error: emailDeliveryErrorMessage(error, 'Kayıt doğrulama e-postası gönderilemedi. SMTP ayarlarını kontrol edip yeniden dene.'),
@@ -264,7 +422,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', rateLimits.login, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
@@ -281,6 +439,8 @@ router.post('/login', async (req, res) => {
       message: 'Doğrulama kodu e-posta adresine gönderildi.',
     });
   } catch (error) {
+    const busyResponse = passwordWorkBusyResponse(error, res);
+    if (busyResponse) return busyResponse;
     console.error('Giriş doğrulama hatası:', error.message);
     return res.status(503).json({
       error: emailDeliveryErrorMessage(error, 'Doğrulama e-postası gönderilemedi. SMTP ayarlarını kontrol et.'),
@@ -288,7 +448,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/verify-2fa', (req, res) => {
+router.post('/verify-2fa', rateLimits.verifyTwoFactor, (req, res) => {
   const loginTicket = String(req.body.loginTicket || '');
   const code = String(req.body.code || '').trim();
   const result = validatePendingCode(pendingTwoFactorLogins, loginTicket, code);
@@ -319,7 +479,7 @@ router.post('/verify-2fa', (req, res) => {
   return res.json({ user: publicUser(user), token: signAuthToken(user) });
 });
 
-router.post('/resend-2fa', async (req, res) => {
+router.post('/resend-2fa', rateLimits.resendTwoFactor, async (req, res) => {
   try {
     const loginTicket = String(req.body.loginTicket || '');
     const result = await resendPendingCode(
@@ -337,7 +497,7 @@ router.post('/resend-2fa', async (req, res) => {
 });
 
 // E-posta adresinin varlığı hakkında bilgi sızdırmamak için her zaman aynı mesaj döner.
-router.post('/request-password-reset', async (req, res) => {
+router.post('/request-password-reset', rateLimits.requestPasswordReset, async (req, res) => {
   const email = normalizeEmail(req.body.email);
   const user = findUserByEmail(email);
   let resetTicket = null;
@@ -347,24 +507,38 @@ router.post('/request-password-reset', async (req, res) => {
       const created = createPendingCode(pendingPasswordResets, user.id);
       resetTicket = created.ticket;
       await sendPasswordResetCode(user.email, user.username, created.code);
+    } else {
+      resetTicket = createDecoyPasswordReset();
     }
   } catch (error) {
-    if (resetTicket) pendingPasswordResets.delete(resetTicket);
+    // SMTP hatası da hesap yokmuş gibi aynı şekil ve sonraki davranışla yanıtlanır.
+    // Böylece yanıt gövdesi üzerinden hesap veya teslimat durumu anlaşılmaz.
+    if (resetTicket) {
+      pendingPasswordResets.delete(resetTicket);
+      createDecoyPasswordReset(resetTicket);
+    } else {
+      resetTicket = createDecoyPasswordReset();
+    }
     console.error('Şifre sıfırlama e-postası gönderilemedi:', error.message);
   }
 
   return res.json({
     message: 'Bu e-posta hesabı kayıtlıysa şifre sıfırlama kodu gönderildi.',
-    ...(resetTicket ? { resetTicket } : {}),
+    resetTicket,
   });
 });
 
-router.post('/resend-password-reset', async (req, res) => {
+router.post('/resend-password-reset', rateLimits.resendPasswordReset, async (req, res) => {
   try {
     const resetTicket = String(req.body.resetTicket || '');
-    const result = await resendPendingCode(pendingPasswordResets, resetTicket, (user, code) => (
-      sendPasswordResetCode(user.email, user.username, code)
-    ));
+    const result = await resendPendingCode(
+      pendingPasswordResets,
+      resetTicket,
+      (user, code, pending) => (pending.decoy
+        ? Promise.resolve()
+        : sendPasswordResetCode(user.email, user.username, code)),
+      pending => (pending.decoy ? { decoy: true } : storage.getUserById(pending.userId)),
+    );
     if (result.error) return res.status(result.status).json({ error: result.error });
     return res.json({ message: 'Yeni şifre sıfırlama kodu e-posta adresine gönderildi.' });
   } catch (error) {
@@ -373,7 +547,7 @@ router.post('/resend-password-reset', async (req, res) => {
   }
 });
 
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', rateLimits.resetPassword, async (req, res) => {
   try {
     const resetTicket = String(req.body.resetTicket || '');
     const code = String(req.body.code || '').trim();
@@ -385,22 +559,29 @@ router.post('/reset-password', async (req, res) => {
     const result = validatePendingCode(pendingPasswordResets, resetTicket, code);
     if (result.error) return res.status(result.status).json({ error: result.error });
 
+    if (result.pending.decoy) {
+      pendingPasswordResets.delete(resetTicket);
+      return res.status(400).json({ error: 'Kod veya doğrulama oturumu geçersiz. İşlemi yeniden başlat.' });
+    }
+
     const user = storage.getUserById(result.pending.userId);
     if (!user) {
       pendingPasswordResets.delete(resetTicket);
       return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
     }
 
-    storage.updateUserPassword(user.id, await bcrypt.hash(newPassword, BCRYPT_ROUNDS));
+    storage.updateUserPassword(user.id, await hashPassword(newPassword));
     pendingPasswordResets.delete(resetTicket);
     return res.json({ message: 'Şifren güncellendi. Güvenlik için yeniden giriş yap.' });
   } catch (error) {
+    const busyResponse = passwordWorkBusyResponse(error, res);
+    if (busyResponse) return busyResponse;
     console.error('Şifre sıfırlama hatası:', error.message);
     return res.status(500).json({ error: 'Şifre güncellenemedi.' });
   }
 });
 
-router.post('/request-email-change', requireAuth, async (req, res) => {
+router.post('/request-email-change', requireAuth, rateLimits.requestEmailChange, async (req, res) => {
   try {
     const newEmail = normalizeEmail(req.body.newEmail);
     const currentPassword = String(req.body.currentPassword || '');
@@ -425,12 +606,14 @@ router.post('/request-email-change', requireAuth, async (req, res) => {
       message: 'Doğrulama kodu yeni e-posta adresine gönderildi.',
     });
   } catch (error) {
+    const busyResponse = passwordWorkBusyResponse(error, res);
+    if (busyResponse) return busyResponse;
     console.error('E-posta değişikliği doğrulaması gönderilemedi:', error.message);
     return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Doğrulama e-postası gönderilemedi.') });
   }
 });
 
-router.post('/resend-email-change', requireAuth, async (req, res) => {
+router.post('/resend-email-change', requireAuth, rateLimits.resendEmailChange, async (req, res) => {
   try {
     const emailChangeTicket = String(req.body.emailChangeTicket || '');
     const pending = pendingEmailChanges.get(emailChangeTicket);
@@ -449,7 +632,7 @@ router.post('/resend-email-change', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/confirm-email-change', requireAuth, (req, res) => {
+router.post('/confirm-email-change', requireAuth, rateLimits.confirmEmailChange, (req, res) => {
   const emailChangeTicket = String(req.body.emailChangeTicket || '');
   const code = String(req.body.code || '').trim();
   const pending = pendingEmailChanges.get(emailChangeTicket);

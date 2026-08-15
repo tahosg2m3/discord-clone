@@ -60,10 +60,15 @@ export default function DMArea() {
     setFirstUnreadId(null);
     setShowPinned(false);
     setShowGroupDetails(false);
-    shouldScrollToBottomRef.current = true;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    // Önceki DM'nin boşaltma render'ı kaydırma isteğini erken tüketmesin.
+    shouldScrollToBottomRef.current = false;
     fetchDMMessages(conversationId)
       .then((dmMessages) => {
-        if (stillCurrent) setMessages(Array.isArray(dmMessages) ? dmMessages : []);
+        if (!stillCurrent) return;
+        shouldScrollToBottomRef.current = true;
+        setMessages(Array.isArray(dmMessages) ? dmMessages : []);
       })
       .catch((error) => console.error('DM mesajları yüklenemedi:', error));
 
@@ -155,8 +160,12 @@ export default function DMArea() {
 
   useEffect(() => {
     if (!shouldScrollToBottomRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: messages.length > 1 ? 'smooth' : 'auto' });
+    const messageList = messageListRef.current;
+    if (messageList) messageList.scrollTop = messageList.scrollHeight;
+    else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
     shouldScrollToBottomRef.current = false;
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
     markDMRead();
   }, [markDMRead, messages]);
 

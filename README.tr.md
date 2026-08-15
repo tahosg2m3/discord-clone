@@ -51,6 +51,8 @@ PORT=3001
 CLIENT_URL=http://localhost:5173
 NODE_ENV=development
 JWT_SECRET=uzun-ve-rastgele-bir-deger-yazin
+# İsteğe bağlı: 32 bayt / 64 hex. Kaybedilirse şifreli veri açılamaz.
+# DATA_ENCRYPTION_KEY=...
 
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
@@ -90,7 +92,6 @@ VITE_PEER_HOST=peer.ornek.com
 VITE_PEER_PORT=443
 VITE_PEER_PATH=/peerjs
 VITE_PEER_SECURE=true
-VITE_TENOR_API_KEY=tenor-api-anahtariniz
 ```
 
 ## Derleme
@@ -108,13 +109,17 @@ npm run build
 
 Electron çıktıları `release/` klasörüne yazılır.
 
-Paketlenmiş masaüstü kurulumunda, uygulama veri klasöründeki `runtime.env.example` dosyasını `runtime.env` adıyla kopyalayıp gerçek SMTP bilgilerini girin. Uygulama SQLite verisini, yüklemeleri ve otomatik ürettiği JWT anahtarını işletim sisteminin uygulama veri klasöründe saklar.
+Paketlenmiş masaüstü kurulumunda, uygulama veri klasöründeki `runtime.env.example` dosyasını `runtime.env` adıyla kopyalayıp gerçek SMTP bilgilerini girin. Parolalar Argon2id ile geri döndürülemez biçimde hashlenir. SQLite/JSON uygulama durumu AES-256-GCM ile şifrelenir; veri anahtarı Windows'ta DPAPI, macOS'ta Keychain üzerinden korunur. Anahtar veya kullanıcı profili kaybolursa şifreli veriler kurtarılamaz; güvenli yedek alın.
+
+GIF araması GIPHY üzerinden çalışır. GIPHY Developers sayfasından bir anahtar oluşturup `backend/.env` (paketli uygulamada `runtime.env`) dosyasına `GIPHY_API_KEY` olarak ekleyin.
 
 ## Güvenlik
 
 - Yayın sırasında npm bağımlılık listelerinde bilinen güvenlik açığı bırakılmaması hedeflenir.
 - REST ve Socket.IO işlemlerinde kullanıcı kimliği doğrulanmış JWT'den alınır; istemcinin gönderdiği kullanıcı kimliğine güvenilmez.
 - Sunucu, kanal, mesaj, ses, moderasyon, yükleme ve yönetim işlemlerinde üyelik/yetki backend tarafında kontrol edilir.
+- Parolalar Argon2id ile hashlenir; eski bcrypt parolalar başarılı girişte otomatik yükseltilir. Eski düz metin parolalar ilk güvenli başlangıçta Argon2id'e taşınır.
+- SQLite/JSON uygulama durumu rastgele nonce ve doğrulama etiketi kullanan AES-256-GCM zarfında saklanır; yanlış anahtar veya değiştirilmiş veri sessizce sıfırlanmaz.
 - Gizli bilgiler ve yerel kullanıcı verileri `.gitignore` ile Git dışında tutulur.
 
 Uygulamayı internete açarken ayrıca HTTPS/WSS, reverse proxy, yalnızca gerçek alan adını kabul eden CORS, hız sınırlaması, izleme, düzenli yedek ve güvenli sır yönetimi kullanın. Güvenlik bildirimi için [SECURITY.md](SECURITY.md) dosyasına bakın.

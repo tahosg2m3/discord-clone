@@ -42,6 +42,36 @@ body {
   color: var(--app-foreground);
 }
 
+html[data-reduced-motion='true'] *,
+html[data-reduced-motion='true'] *::before,
+html[data-reduced-motion='true'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+html[data-contrast='high'] {
+  --app-background: #020617;
+  --app-foreground: #ffffff;
+  --scroll-thumb: #64748b;
+  --scroll-thumb-hover: #94a3b8;
+}
+
+html[data-contrast='high'] button:focus-visible,
+html[data-contrast='high'] input:focus-visible,
+html[data-contrast='high'] select:focus-visible,
+html[data-contrast='high'] textarea:focus-visible,
+html[data-contrast='high'] [tabindex]:focus-visible {
+  outline: 3px solid #facc15 !important;
+  outline-offset: 2px !important;
+}
+
+html[data-underline-links='true'] a {
+  text-decoration: underline !important;
+  text-underline-offset: 0.18em;
+}
+
 html[data-theme='midnight'] [class*="bg-[#0f172a]"],
 html[data-theme='midnight'] [class*="bg-[#111827]"],
 html[data-theme='midnight'] [class*="bg-[#1E1F22]"] {
