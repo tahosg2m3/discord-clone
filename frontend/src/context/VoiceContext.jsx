@@ -7,6 +7,7 @@ import {
   isRnnoiseRuntimeSupported,
   RNNOISE_SAMPLE_RATE,
 } from '../services/rnnoiseProcessor';
+import { FEEDBACK_SOUND_IDS, playFeedbackSound } from '../services/feedbackSoundService';
 
 const VoiceContext = createContext(null);
 
@@ -470,12 +471,14 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     const editable = target => target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
     const setPressed = pressed => {
+      if (voiceModeRef.current !== 'push-to-talk' || !isInVoiceRef.current) return;
+      if (pushToTalkActiveRef.current === pressed) return;
       pushToTalkActiveRef.current = pressed;
       setIsPushToTalkActive(pressed);
-      if (voiceModeRef.current !== 'push-to-talk') return;
       audioStreamRef.current?.getAudioTracks().forEach(track => {
         track.enabled = pressed && !isMutedRef.current && !voiceCapabilitiesRef.current.serverMuted;
       });
+      playFeedbackSound(pressed ? FEEDBACK_SOUND_IDS.PTT_ACTIVATE : FEEDBACK_SOUND_IDS.PTT_DEACTIVATE);
     };
     const down = event => {
       if (voiceModeRef.current !== 'push-to-talk' || event.code !== pushToTalkKey || editable(event.target)) return;
@@ -1093,6 +1096,7 @@ export const VoiceProvider = ({ children }) => {
     const activeChannel = activeVoiceChannelRef.current;
     if (notify && activeChannel?.id && socketRef.current?.connected) {
       void notifyStreamChanged(activeChannel.id, { kind: 'video', mode: getCurrentVideoMode() });
+      playFeedbackSound(FEEDBACK_SOUND_IDS.STREAM_STOPPED);
     }
   };
 
@@ -1196,6 +1200,7 @@ export const VoiceProvider = ({ children }) => {
         return;
       }
       broadcastVideoStream(stream, 'screen');
+      playFeedbackSound(FEEDBACK_SOUND_IDS.STREAM_STARTED);
     } catch (error) {
       if (error.name !== 'NotAllowedError') {
         console.error('Ekran paylaşımı hatası:', error);
@@ -1204,9 +1209,13 @@ export const VoiceProvider = ({ children }) => {
     }
   };
 
-  const leaveVoiceChannel = ({ notifyServer = true } = {}) => {
+  const leaveVoiceChannel = ({ notifyServer = true, playSound = notifyServer } = {}) => {
     const activeChannel = activeVoiceChannelRef.current;
     const currentSocket = socketRef.current;
+
+    // Ayrılan kullanıcı da Discord'daki gibi çıkış bildirimini duyar. Başarısız
+    // join/rollback akışlarında notifyServer=false olduğu için gereksiz çalmaz.
+    if (playSound && activeChannel?.id) playFeedbackSound(FEEDBACK_SOUND_IDS.LEAVE_CALL);
 
     // Önce ref'leri temizlemek, geç kalan PeerJS çağrılarının cevaplanmasını engeller.
     activeVoiceChannelRef.current = null;
@@ -1215,8 +1224,10 @@ export const VoiceProvider = ({ children }) => {
     joinInProgressRef.current = false;
     rejoiningRef.current = false;
 
-    if (notifyServer && activeChannel?.id && currentSocket?.connected) {
-      currentSocket.emit('voice:leave', { channelId: activeChannel.id });
+    if (notifyServer && currentSocket?.connected) {
+      // Backend bu socket'i bulunduğu tüm ses kanallarından çıkarır. Kanal
+      // state'i istemcide bozulmuş olsa bile kullanıcı seste kilitli kalmaz.
+      currentSocket.emit('voice:leave', { channelId: activeChannel?.id || null });
     }
 
     closeAllCalls();
@@ -1244,21 +1255,26 @@ export const VoiceProvider = ({ children }) => {
     setIsVoiceViewOpen(false);
   };
 
-  const joinVoiceChannel = async (channel) => {
-    if (!channel?.id || joinInProgressRef.current) return;
+  const joinVoiceChannel = async (channel, { isMove = false } = {}) => {
+    if (!channel?.id || joinInProgressRef.current) return false;
     if (!socketRef.current?.connected) {
       setVoiceError('Sunucu bağlantısı kurulamadı. Tekrar dene.');
-      return;
+      return false;
     }
     if (!peerIdRef.current) {
       setVoiceError('Ses altyapısı hazırlanıyor. Birkaç saniye sonra tekrar dene.');
-      return;
+      return false;
     }
-    if (sameId(activeVoiceChannelRef.current?.id, channel.id)) return;
+    if (sameId(activeVoiceChannelRef.current?.id, channel.id)) return true;
 
     joinInProgressRef.current = true;
     try {
-      if (activeVoiceChannelRef.current) leaveVoiceChannel();
+      if (activeVoiceChannelRef.current) {
+        leaveVoiceChannel({ notifyServer: !isMove, playSound: !isMove });
+        // leaveVoiceChannel genel temizlik sırasında bu bayrağı da sıfırlar.
+        // Kanal değiştirme işlemi bitene kadar ikinci bir join başlamasın.
+        joinInProgressRef.current = true;
+      }
 
       // Mikrofon izni istemeden önce sunucunun güncel CONNECT/SPEAK/STREAM
       // yetkisini imzalı socket oturumu üzerinden al.
@@ -1266,7 +1282,7 @@ export const VoiceProvider = ({ children }) => {
       const capabilities = normalizeCapabilities(preflight?.capabilities);
       if (!preflight?.success || !capabilities.canConnect) {
         setVoiceError(preflight?.error || 'Bu ses kanalına bağlanma yetkin yok.');
-        return;
+        return false;
       }
 
       const localUser = userRef.current;
@@ -1295,13 +1311,15 @@ export const VoiceProvider = ({ children }) => {
       if (!result?.success) {
         setVoiceError(result?.error || 'Ses kanalına bağlanılamadı.');
         leaveVoiceChannel({ notifyServer: false });
-        return;
+        return false;
       }
 
+      if (!isMove) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_JOINS);
       const joinedCapabilities = applyVoiceCapabilities(result.capabilities || capabilities);
       if (joinedCapabilities.canSpeak && !joinedCapabilities.serverMuted && !isMutedRef.current) {
         await ensureMicrophone({ skipCapabilityRefresh: true });
       }
+      return true;
     } finally {
       joinInProgressRef.current = false;
     }
@@ -1364,13 +1382,16 @@ export const VoiceProvider = ({ children }) => {
       if (!started) {
         isMutedRef.current = true;
         setIsMuted(true);
+        return;
       }
+      playFeedbackSound(FEEDBACK_SOUND_IDS.UNMUTE);
       return;
     }
 
     audioStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = !nextMuted && (voiceModeRef.current !== 'push-to-talk' || pushToTalkActiveRef.current);
     });
+    playFeedbackSound(nextMuted ? FEEDBACK_SOUND_IDS.MUTE : FEEDBACK_SOUND_IDS.UNMUTE);
   };
 
   const toggleDeafen = () => {
@@ -1382,6 +1403,7 @@ export const VoiceProvider = ({ children }) => {
     isDeafenedRef.current = nextDeafened;
     applyDeafenState(nextDeafened);
     setIsDeafened(nextDeafened);
+    playFeedbackSound(nextDeafened ? FEEDBACK_SOUND_IDS.DEAFEN : FEEDBACK_SOUND_IDS.UNDEAFEN);
   };
 
   const setVoiceMode = (mode) => {
@@ -1517,17 +1539,21 @@ export const VoiceProvider = ({ children }) => {
         call.answer();
         call.on('stream', (stream) => {
           if (!stream?.getVideoTracks().length) return;
+          const wasAlreadyWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
           setRemoteVideoStreams((previous) => {
             const updated = { ...previous, [remoteUserId]: { stream, mode } };
             remoteVideoStreamsRef.current = updated;
             return updated;
           });
+          if (!wasAlreadyWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_JOINED_STREAM);
         });
 
         const removeVideoCall = () => {
           if (incomingVideoCallsRef.current[remoteUserId] === call) {
             delete incomingVideoCallsRef.current[remoteUserId];
+            const wasWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
             removeRemoteVideo(remoteUserId);
+            if (wasWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_LEFT_STREAM);
           }
         };
         call.on('close', removeVideoCall);
@@ -1562,6 +1588,7 @@ export const VoiceProvider = ({ children }) => {
       if (!participant?.userId || !participant?.peerId) return;
       if (participant.channelId && !sameId(participant.channelId, activeChannel?.id)) return;
 
+      playFeedbackSound(FEEDBACK_SOUND_IDS.USER_JOINS);
       const userId = String(participant.userId);
       const previousPeerId = participantsRef.current[userId]?.peerId;
       addVoiceParticipant(participant);
@@ -1595,8 +1622,18 @@ export const VoiceProvider = ({ children }) => {
     };
 
     const handleUserLeft = ({ userId, channelId } = {}) => {
-      if (channelId && !sameId(channelId, activeVoiceChannelRef.current?.id)) return;
       const normalizedUserId = String(userId || '');
+      if (channelId && normalizedUserId) {
+        // Kanal altındaki genel katılımcı listesi, aktif olarak o ses
+        // kanalında bulunmasak bile canlı kalmalı.
+        setVoiceChannelMembers((previous) => ({
+          ...previous,
+          [channelId]: (previous[channelId] || [])
+            .filter(member => !sameId(member?.userId || member?.id, normalizedUserId)),
+        }));
+      }
+      if (channelId && !sameId(channelId, activeVoiceChannelRef.current?.id)) return;
+      if (normalizedUserId) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_LEAVES);
       callsRef.current[normalizedUserId]?.close();
       delete callsRef.current[normalizedUserId];
       removeRemoteUser(normalizedUserId);
@@ -1669,20 +1706,23 @@ export const VoiceProvider = ({ children }) => {
       }
     };
 
-    const handleModerated = ({ action, byUsername, serverId, state } = {}) => {
+    const handleModerated = ({ action, byUsername, serverId, state, targetChannel } = {}) => {
       const activeChannel = activeVoiceChannelRef.current;
       if (serverId && activeChannel?.serverId && !sameId(serverId, activeChannel.serverId)) return;
 
       if (action === 'mute') {
         applyVoiceCapabilities({ ...voiceCapabilitiesRef.current, ...state, serverMuted: true });
+        playFeedbackSound(FEEDBACK_SOUND_IDS.MUTE);
         setVoiceError(`${byUsername || 'Bir moderatör'} mikrofonunu susturdu.`);
       }
       if (action === 'deafen') {
         applyVoiceCapabilities({ ...voiceCapabilitiesRef.current, ...state, serverDeafened: true });
+        playFeedbackSound(FEEDBACK_SOUND_IDS.DEAFEN);
         setVoiceError(`${byUsername || 'Bir moderatör'} seni sağırlaştırdı.`);
       }
       if (action === 'unmute') {
         applyVoiceCapabilities({ ...voiceCapabilitiesRef.current, ...state, serverMuted: false });
+        playFeedbackSound(FEEDBACK_SOUND_IDS.UNMUTE);
         setVoiceError(`${byUsername || 'Bir moderatör'} mikrofonunun sesini açtı.`);
       }
       if (action === 'undeafen') {
@@ -1690,11 +1730,26 @@ export const VoiceProvider = ({ children }) => {
         isDeafenedRef.current = false;
         applyDeafenState(false);
         setIsDeafened(false);
+        playFeedbackSound(FEEDBACK_SOUND_IDS.UNDEAFEN);
         setVoiceError(`${byUsername || 'Bir moderatör'} sağırlaştırmayı kaldırdı.`);
       }
       if (action === 'disconnect') {
+        playFeedbackSound(FEEDBACK_SOUND_IDS.LEAVE_CALL);
         setVoiceError(`${byUsername || 'Bir moderatör'} seni ses kanalından çıkardı.`);
         leaveVoiceChannelRef.current({ notifyServer: false });
+      }
+      if (action === 'move' || action === 'moved') {
+        playFeedbackSound(FEEDBACK_SOUND_IDS.MOVED);
+        if (!targetChannel?.id) {
+          setVoiceError('Taşındığın ses kanalı bulunamadı.');
+          leaveVoiceChannelRef.current({ notifyServer: false, playSound: false });
+          return;
+        }
+        void joinVoiceChannel(targetChannel, { isMove: true }).then((joined) => {
+          if (joined) {
+            setVoiceError(`${byUsername || 'Bir moderatör'} seni ${targetChannel.name || 'başka bir ses kanalına'} taşıdı.`);
+          }
+        });
       }
     };
 

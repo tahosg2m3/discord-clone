@@ -3,6 +3,7 @@ import { SocketProvider, useSocket } from './context/SocketContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ServerProvider, useServer } from './context/ServerContext';
 import { VoiceProvider, useVoice } from './context/VoiceContext';
+import { DirectCallProvider } from './context/DirectCallContext';
 import { DMProvider } from './context/DMContext';
 import { FriendsProvider } from './context/FriendsContext';
 import toast, { Toaster } from 'react-hot-toast';
@@ -22,6 +23,7 @@ import NotificationCenter from './components/notifications/NotificationCenter';
 import ForumArea from './components/forum/ForumArea';
 import OnboardingGate from './components/server/OnboardingGate';
 import NsfwGate from './components/server/NsfwGate';
+import DirectCallOverlay from './components/call/DirectCallOverlay';
 
 function AppContent() {
   const { user } = useAuth();
@@ -118,28 +120,28 @@ function AppContent() {
         <UserProfile />
       </div>
 
-      <div className="flex flex-col flex-1 min-w-0 bg-[#111827] relative">
-        {isInVoice && isVoiceViewOpen ? (
-          <VoiceRoomView />
-        ) : viewMode === 'servers' ? (
-          currentChannel ? (
-            <>
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#111827]">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {isInVoice && isVoiceViewOpen ? (
+            <VoiceRoomView />
+          ) : viewMode === 'servers' ? (
+            currentChannel ? (
               <NsfwGate channel={currentChannel}>{currentChannel.type === 'forum' ? <ForumArea /> : <ChatArea />}</NsfwGate>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-[#949BA4] select-none">
-              <div className="w-20 h-20 mb-6 bg-[#2B2D31] rounded-full flex items-center justify-center shadow-inner">
-                <span className="text-4xl font-bold text-[#404249]">#</span>
+            ) : (
+              <div className="flex flex-1 select-none flex-col items-center justify-center text-[#949BA4]">
+                <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[#2B2D31] shadow-inner">
+                  <span className="text-4xl font-bold text-[#404249]">#</span>
+                </div>
+                <h3 className="mb-2 text-xl font-bold text-[#F2F3F5]">Kanal Seçilmedi</h3>
+                <p className="text-[15px]">Sohbete başlamak için sol taraftan bir metin veya ses kanalı seçin.</p>
               </div>
-              <h3 className="text-xl font-bold text-[#F2F3F5] mb-2">Kanal Seçilmedi</h3>
-              <p className="text-[15px]">Sohbete başlamak için sol taraftan bir metin veya ses kanalı seçin.</p>
-            </div>
-          )
-        ) : viewMode === 'friends' ? (
-          <FriendsList />
-        ) : (
-          <DMArea />
-        )}
+            )
+          ) : viewMode === 'friends' ? (
+            <FriendsList />
+          ) : (
+            <DMArea />
+          )}
+        </div>
 
         {/* Ses paneli görünümden bağımsız olarak orta sütunda kalır. Böylece
             kullanıcı DM veya Arkadaşlar ekranına geçse de aramayı yönetebilir. */}
@@ -164,8 +166,11 @@ function App() {
           <DMProvider>
             <ServerProvider>
               <VoiceProvider>
-                <AppContent />
-                <Toaster position="bottom-right" toastOptions={{ style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' } }} />
+                <DirectCallProvider>
+                  <AppContent />
+                  <DirectCallOverlay />
+                  <Toaster position="bottom-right" toastOptions={{ style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' } }} />
+                </DirectCallProvider>
               </VoiceProvider>
             </ServerProvider>
           </DMProvider>

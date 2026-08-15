@@ -11,6 +11,7 @@ const VOICE_MODERATION_ACTIONS = {
   deafen: { permission: 'DEAFEN_MEMBERS', changes: { serverDeafened: true } },
   undeafen: { permission: 'DEAFEN_MEMBERS', changes: { serverDeafened: false } },
   disconnect: { permission: 'MOVE_MEMBERS' },
+  move: { permission: 'MOVE_MEMBERS' },
 };
 
 const SOUNDBOARD_SOUND_IDS = new Set([
@@ -149,6 +150,11 @@ function removeVoiceSocket(io, channelId, socketId, { notify = true } = {}) {
         timestamp: Date.now(),
       };
       managers.forEach(targetSocket => targetSocket.emit('platform:update', update));
+    } else {
+      // Son katılımcı çıktığında da kanal listesini izleyen tüm yetkili
+      // istemcilere boş snapshot gönder. Aksi halde kullanıcı, F5 yapılana
+      // kadar ses kanalının altında görünmeye devam eder.
+      broadcastVoiceMembers(io, channelId);
     }
   } else {
     broadcastVoiceMembers(io, channelId);
@@ -486,6 +492,43 @@ module.exports = (io, socket) => {
       serverId: channel.serverId,
       byUsername: socket.userData.username,
     };
+
+    if (action === 'move') {
+      const targetChannelId = String(data.targetChannelId || '');
+      const targetChannel = storage.getChannelById(targetChannelId);
+      const targetCapabilities = getVoiceCapabilities(targetChannel, targetUserId);
+      const actorCanMoveInSource = platformService.hasChannelPermission(channel.id, actorId, 'MOVE_MEMBERS');
+      const actorCanMoveInTarget = targetChannel
+        ? platformService.hasChannelPermission(targetChannel.id, actorId, 'MOVE_MEMBERS')
+        : false;
+
+      if (!targetChannel
+        || !['voice', 'stage'].includes(targetChannel.type)
+        || !sameId(targetChannel.serverId, channel.serverId)
+        || sameId(targetChannel.id, channel.id)
+        || !targetCapabilities.canConnect
+        || !actorCanMoveInSource
+        || !actorCanMoveInTarget) {
+        moderationFail('Kullanıcı bu ses kanalına taşınamıyor veya taşıma yetkin yetersiz.');
+        return;
+      }
+
+      removeVoiceSocket(io, channel.id, targetParticipant.socketId);
+      // Aynı hesap birden fazla cihazda açıksa yalnızca gerçekten kaynak ses
+      // kanalında bulunan socket taşınır; diğer cihazlar istemeden kanala girmez.
+      io.to(targetParticipant.socketId).emit('voice:moderated', {
+        ...eventBase,
+        action: 'move',
+        targetChannel: {
+          id: targetChannel.id,
+          serverId: targetChannel.serverId,
+          name: targetChannel.name,
+          type: targetChannel.type,
+        },
+      });
+      reply(callback, { success: true, action: 'move', targetChannelId: targetChannel.id });
+      return;
+    }
 
     if (definition.changes) {
       const state = storage.setMemberModerationState(channel.serverId, targetUserId, definition.changes, actorId);

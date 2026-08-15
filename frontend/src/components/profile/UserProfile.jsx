@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { Mic, Headphones, Settings, LogOut, User } from 'lucide-react';
+import { Mic, Headphones, PhoneOff, Settings, LogOut, User } from 'lucide-react';
 import { getColorForString } from '../../utils/colors';
 import UserSettingsModal from './UserSettingsModal'; // YENİ MODALI İÇE AKTARDIK
 import { useVoice } from '../../context/VoiceContext';
@@ -10,7 +10,15 @@ import { useVoice } from '../../context/VoiceContext';
 export default function UserProfile() {
   const { user, logout, updateUserData } = useAuth();
   const { socket, isPresenceReady } = useSocket();
-  const { isInVoice, isMuted, isDeafened, toggleMute, toggleDeafen } = useVoice();
+  const {
+    isInVoice,
+    isMuted,
+    isDeafened,
+    voiceChannelMembers,
+    toggleMute,
+    toggleDeafen,
+    leaveVoiceChannel,
+  } = useVoice();
   const [showMenu, setShowMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false); // AYARLAR MODAL STATE'İ
   const [settingsInitialTab, setSettingsInitialTab] = useState('account');
@@ -39,6 +47,12 @@ export default function UserProfile() {
   const presence = user.presenceStatus || user.status || (isPresenceReady ? 'online' : 'offline');
   const presenceLabels = { online: 'Çevrimiçi', idle: 'Boşta', dnd: 'Rahatsız etmeyin', invisible: 'Görünmez', offline: 'Çevrimdışı' };
   const presenceColor = presence === 'online' ? 'bg-[#34d399]' : presence === 'idle' ? 'bg-[#f59e0b]' : presence === 'dnd' ? 'bg-[#ef4444]' : 'bg-[#64748b]';
+  const isListedInVoice = Object.values(voiceChannelMembers || {}).some(channelMembers => (
+    Array.isArray(channelMembers) && channelMembers.some(member => (
+      String(member?.userId || member?.id || '') === String(user.id)
+    ))
+  ));
+  const hasVoiceConnection = isInVoice || isListedInVoice;
 
   const changePresence = (nextStatus) => {
     updateUserData({ presenceStatus: nextStatus });
@@ -83,6 +97,17 @@ export default function UserProfile() {
           <button type="button" onClick={toggleDeafen} disabled={!isInVoice} title={isInVoice ? (isDeafened ? 'Sesi aç' : 'Kendini sağırlaştır') : 'Bir ses kanalında değilsin'} className={`p-1.5 hover:bg-[#313338] rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${isDeafened ? 'text-[#ef4444]' : 'hover:text-[#DBDEE1]'}`}>
             <Headphones className="w-[18px] h-[18px]" />
           </button>
+          {hasVoiceConnection && (
+            <button
+              type="button"
+              onClick={() => leaveVoiceChannel()}
+              title="Ses kanalından ayrıl"
+              aria-label="Ses kanalından ayrıl"
+              className="rounded-md p-1.5 text-[#ef4444] transition-colors hover:bg-[#ef4444]/15 hover:text-[#f87171]"
+            >
+              <PhoneOff className="h-[18px] w-[18px]" />
+            </button>
+          )}
           {/* DİŞLİ ÇARK İKONU DA AYARLARI AÇAR */}
           <button
             type="button"
