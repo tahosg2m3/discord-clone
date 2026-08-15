@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bell, BellRing, CheckCheck, X } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
+import { FEEDBACK_SOUND_IDS, playFeedbackSound } from '../../services/feedbackSoundService';
 
 function formatNotificationTime(timestamp) {
   return new Intl.DateTimeFormat('tr-TR', {
@@ -30,6 +31,7 @@ export default function NotificationCenter() {
       };
 
       setNotifications(previous => [nextNotification, ...previous].slice(0, 50));
+      playFeedbackSound(FEEDBACK_SOUND_IDS.MESSAGE);
 
       if (document.hidden && Notification.permission === 'granted') {
         new Notification(nextNotification.title, {

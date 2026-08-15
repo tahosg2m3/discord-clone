@@ -4,6 +4,7 @@ const typingHandler = require('./handlers/typingHandler');
 const voiceHandler = require('./handlers/voiceHandler');
 const dmHandler = require('./handlers/dmHandler');
 const statusHandler = require('./handlers/statusHandler');
+const callHandler = require('./handlers/callHandler');
 const { userService } = require('../services/userService');
 const storage = require('../storage/inMemory');
 const { verifyAuthToken } = require('../middleware/auth');
@@ -131,6 +132,7 @@ module.exports = (io) => {
     socket.on('typing:stop', ensureAuthenticated(data => typingHandler.handleStop(io, socket, data)));
 
     voiceHandler(io, socket);
+    callHandler(io, socket);
 
     socket.on('dm:send', ensureAuthenticated(data => dmHandler.handleSendDM(io, socket, data)));
     socket.on('status:change', ensureAuthenticated(data => statusHandler.handleStatusChange(io, socket, data)));

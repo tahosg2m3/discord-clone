@@ -81,6 +81,7 @@ export default function ChannelList({ onNavigate }) {
   const [showServerProfile, setShowServerProfile] = useState(false);
   const [openChannelMenu, setOpenChannelMenu] = useState(null);
   const [openVoiceMenu, setOpenVoiceMenu] = useState(null);
+  const [voiceDropTargetId, setVoiceDropTargetId] = useState(null);
   const [roles, setRoles] = useState([]);
   const [members, setMembers] = useState([]);
   const [permissionMap, setPermissionMap] = useState({});
@@ -111,6 +112,7 @@ export default function ChannelList({ onNavigate }) {
     setUnreadByChannel({});
     setOpenChannelMenu(null);
     setOpenVoiceMenu(null);
+    setVoiceDropTargetId(null);
     loadChannels();
     requestVoiceChannelMembers(currentServer.id);
 
@@ -283,18 +285,28 @@ export default function ChannelList({ onNavigate }) {
     }
   };
 
-  const emitVoiceModeration = (action, participant, channel) => {
+  const emitVoiceModeration = (action, participant, channel, targetChannel = null) => {
     const targetUserId = getVoiceParticipantId(participant);
     if (!socket || !targetUserId || targetUserId === user?.id) return;
 
     const requiresMute = ['mute', 'unmute'].includes(action);
     const requiresDeafen = ['deafen', 'undeafen'].includes(action);
-    if ((requiresMute && !canMuteMembers) || (requiresDeafen && !canDeafenMembers) || (action === 'disconnect' && !canDisconnectMembers)) {
+    if ((requiresMute && !canMuteMembers) || (requiresDeafen && !canDeafenMembers) || (['disconnect', 'move'].includes(action) && !canDisconnectMembers)) {
       toast.error('Bu işlem için yetkin yok.');
       return;
     }
 
-    socket.emit('voice:moderate', { action, targetUserId, channelId: channel.id }, (result) => {
+    if (action === 'move' && (!targetChannel?.id || targetChannel.id === channel.id)) {
+      toast.error('Farklı bir ses kanalı seçmelisin.');
+      return;
+    }
+
+    socket.emit('voice:moderate', {
+      action,
+      targetUserId,
+      channelId: channel.id,
+      ...(action === 'move' ? { targetChannelId: targetChannel.id } : {}),
+    }, (result) => {
       if (!result?.success) {
         toast.error(result?.error || 'Ses moderasyonu uygulanamadı.');
         requestVoiceChannelMembers(currentServer?.id);
@@ -312,8 +324,9 @@ export default function ChannelList({ onNavigate }) {
         },
       }));
       setOpenVoiceMenu(null);
-      const labels = { mute: 'susturuldu', unmute: 'susturması kaldırıldı', deafen: 'sağırlaştırıldı', undeafen: 'sağırlaştırması kaldırıldı', disconnect: 'ses kanalından çıkarıldı' };
+      const labels = { mute: 'susturuldu', unmute: 'susturması kaldırıldı', deafen: 'sağırlaştırıldı', undeafen: 'sağırlaştırması kaldırıldı', disconnect: 'ses kanalından çıkarıldı', move: `${targetChannel?.name || 'diğer kanala'} taşındı` };
       toast.success(`Üye ${labels[action]}.`);
+      if (action === 'move') requestVoiceChannelMembers(currentServer?.id);
     });
   };
 
@@ -336,6 +349,41 @@ export default function ChannelList({ onNavigate }) {
   };
   const textChannels = channels.filter((channel) => !channel.type || ['text', 'announcement', 'forum', 'media'].includes(channel.type)).sort(byCategoryAndPosition);
   const voiceChannels = channels.filter((channel) => ['voice', 'stage'].includes(channel.type)).sort(byCategoryAndPosition);
+
+  const handleVoiceDragStart = (event, participant, sourceChannel) => {
+    const targetUserId = getVoiceParticipantId(participant);
+    if (!canDisconnectMembers || !targetUserId || targetUserId === user?.id) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-tahosapp-voice-member', JSON.stringify({
+      targetUserId,
+      sourceChannelId: sourceChannel.id,
+    }));
+    event.dataTransfer.setData('text/plain', targetUserId);
+  };
+
+  const handleVoiceDrop = (event, targetChannel) => {
+    event.preventDefault();
+    setVoiceDropTargetId(null);
+    if (!canDisconnectMembers) return;
+    try {
+      const payload = JSON.parse(event.dataTransfer.getData('application/x-tahosapp-voice-member'));
+      if (!payload?.targetUserId || !payload?.sourceChannelId || payload.sourceChannelId === targetChannel.id) return;
+      const sourceChannel = voiceChannels.find((candidate) => candidate.id === payload.sourceChannelId);
+      const participant = (voiceChannelMembers[payload.sourceChannelId] || [])
+        .find((candidate) => getVoiceParticipantId(candidate) === payload.targetUserId);
+      if (!sourceChannel || !participant) {
+        toast.error('Kullanıcının güncel ses bağlantısı bulunamadı.');
+        requestVoiceChannelMembers(currentServer?.id);
+        return;
+      }
+      emitVoiceModeration('move', participant, sourceChannel, targetChannel);
+    } catch {
+      toast.error('Taşıma bilgisi okunamadı.');
+    }
+  };
 
   const renderCreateForm = (type) => {
     if (createType !== type) return null;
@@ -508,7 +556,21 @@ export default function ChannelList({ onNavigate }) {
                 const isActive = activeVoiceChannel?.id === channel.id || currentChannel?.id === channel.id;
                 const channelMembers = voiceChannelMembers[channel.id] || [];
                 return (
-                  <div key={channel.id} className="group relative px-2" ref={openChannelMenu === channel.id ? floatingRef : null}>
+                  <div
+                    key={channel.id}
+                    className={`group relative rounded-lg px-2 transition ${voiceDropTargetId === channel.id ? 'bg-[#5865F2]/20 ring-1 ring-inset ring-[#818CF8]' : ''}`}
+                    ref={openChannelMenu === channel.id ? floatingRef : null}
+                    onDragOver={(event) => {
+                      if (!canDisconnectMembers || !Array.from(event.dataTransfer.types || []).includes('application/x-tahosapp-voice-member')) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      setVoiceDropTargetId(channel.id);
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) setVoiceDropTargetId(null);
+                    }}
+                    onDrop={(event) => handleVoiceDrop(event, channel)}
+                  >
                     <button type="button" onClick={() => handleChannelClick(channel)} className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left transition ${isActive ? 'bg-[#404249] text-white shadow-sm' : 'text-[#949BA4] hover:bg-[#35373C] hover:text-[#DBDEE1]'}`}>
                       {channel.type === 'stage' ? <Radio className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" /> : <Volume2 className="mr-1.5 h-5 w-5 shrink-0 text-[#80848E]" />}
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
@@ -536,7 +598,15 @@ export default function ChannelList({ onNavigate }) {
                       const voiceMenuKey = `${channel.id}:${participantId}`;
                       const moderatorCanAct = participantId !== user?.id && (canMuteMembers || canDeafenMembers || canDisconnectMembers);
                       return (
-                        <div key={participantId} className="relative ml-7 mr-2 mt-1" ref={openVoiceMenu === voiceMenuKey ? floatingRef : null}>
+                        <div
+                          key={participantId}
+                          className={`relative ml-7 mr-2 mt-1 ${canDisconnectMembers && participantId !== user?.id ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                          ref={openVoiceMenu === voiceMenuKey ? floatingRef : null}
+                          draggable={canDisconnectMembers && participantId !== user?.id}
+                          onDragStart={(event) => handleVoiceDragStart(event, participant, channel)}
+                          onDragEnd={() => setVoiceDropTargetId(null)}
+                          title={canDisconnectMembers && participantId !== user?.id ? 'Başka bir ses kanalına sürükleyerek taşı' : undefined}
+                        >
                           <div className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 transition-all ${isSpeaking ? 'border-[#34D399] bg-[#34D399]/10 shadow-[0_0_12px_rgba(52,211,153,0.18)]' : 'border-transparent hover:bg-white/[0.04]'}`}>
                             <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold text-white ${isSpeaking ? 'bg-[#34D399]' : 'bg-[#475569]'}`}>{displayName[0]?.toUpperCase() || '?'}</div>
                             <span className={`min-w-0 flex-1 truncate text-[12px] ${isSpeaking ? 'font-semibold text-[#D1FAE5]' : 'text-[#CBD5E1]'}`}>{displayName}</span>
@@ -549,11 +619,34 @@ export default function ChannelList({ onNavigate }) {
                             )}
                           </div>
                           {openVoiceMenu === voiceMenuKey && (
-                            <div className="absolute right-0 top-8 z-[60] w-48 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl">
+                            <div
+                              className="absolute right-0 top-8 z-[60] w-48 rounded-md border border-black/30 bg-[#111214] p-1 shadow-2xl"
+                              draggable={false}
+                              onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                            >
                               {channel.type === 'stage' && canDisconnectMembers && participant.requestedToSpeak && <button type="button" onClick={() => emitStageModeration('approve', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#34d399] transition hover:bg-[#34d399]/10"><Mic className="h-3.5 w-3.5" /> Söz hakkı ver</button>}
                               {channel.type === 'stage' && canDisconnectMembers && participant.stageRole === 'speaker' && <button type="button" onClick={() => emitStageModeration('audience', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><VolumeX className="h-3.5 w-3.5" /> Dinleyici yap</button>}
                               {canMuteMembers && <button type="button" onClick={() => emitVoiceModeration(isMuted ? 'unmute' : 'mute', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><MicOff className="h-3.5 w-3.5" /> {isMuted ? 'Susturmayı kaldır' : 'Sustur'}</button>}
                               {canDeafenMembers && <button type="button" onClick={() => emitVoiceModeration(isDeafened ? 'undeafen' : 'deafen', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#DBDEE1] transition hover:bg-[#35373C]"><Headphones className="h-3.5 w-3.5" /> {isDeafened ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'}</button>}
+                              {canDisconnectMembers && voiceChannels.some((candidate) => candidate.id !== channel.id) && (
+                                <label className="block rounded px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#949BA4]">
+                                  Başka kanala taşı
+                                  <select
+                                    defaultValue=""
+                                    onChange={(event) => {
+                                      const targetChannel = voiceChannels.find((candidate) => candidate.id === event.target.value);
+                                      if (targetChannel) emitVoiceModeration('move', participant, channel, targetChannel);
+                                    }}
+                                    className="mt-1 w-full rounded border border-white/10 bg-[#1E1F22] px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-[#DBDEE1] outline-none focus:border-[#5865F2]"
+                                    aria-label={`${displayName} kullanıcısını başka ses kanalına taşı`}
+                                  >
+                                    <option value="" disabled>Kanal seç…</option>
+                                    {voiceChannels.filter((candidate) => candidate.id !== channel.id).map((candidate) => (
+                                      <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              )}
                               {canDisconnectMembers && <button type="button" onClick={() => emitVoiceModeration('disconnect', participant, channel)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs text-[#F23F42] transition hover:bg-[#F23F42]/10"><PhoneOff className="h-3.5 w-3.5" /> Kanaldan çıkar</button>}
                             </div>
                           )}

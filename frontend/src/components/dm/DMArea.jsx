@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pin, Users, X } from 'lucide-react';
+import { Phone, Pin, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useDM } from '../../context/DMContext';
 import { useAuth } from '../../context/AuthContext';
@@ -11,6 +11,7 @@ import TypingIndicator from '../chat/TypingIndicator';
 import { getColorForString } from '../../utils/colors';
 import GroupDMAvatar from './GroupDMAvatar';
 import GroupDMDetailsPanel from './GroupDMDetailsPanel';
+import { useDirectCall } from '../../context/DirectCallContext';
 
 function updateMessageInList(messages, update) {
   const messageId = update.messageId || update.id;
@@ -25,6 +26,7 @@ export default function DMArea() {
   const { activeDM, setActiveDM } = useDM();
   const { user } = useAuth();
   const { socket } = useSocket();
+  const { call, peerReady, startCall } = useDirectCall();
   const [messages, setMessages] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
   const [replyTo, setReplyTo] = useState(null);
@@ -242,6 +244,7 @@ export default function DMArea() {
           {groupDM && <span className="hidden text-xs text-[#64748b] sm:inline">{activeDM.memberIds?.length || activeDM.members?.length || 0} üye</span>}
         </div>
         <div className="ml-auto flex items-center gap-1">
+          {!groupDM && <button type="button" disabled={Boolean(call) || !peerReady} onClick={async () => { const result = await startCall({ targetUser: directUser, conversationId: activeDM.id }); if (!result?.success) toast.error(result?.error || 'Arama başlatılamadı.'); }} className="rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40" title={call ? 'Zaten bir aramadasın' : !peerReady ? 'Arama altyapısı hazırlanıyor' : 'Sesli arama başlat'} aria-label="Sesli arama başlat"><Phone className="h-5 w-5" /></button>}
           {groupDM && <button type="button" onClick={() => setShowGroupDetails((show) => !show)} className={`rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showGroupDetails ? 'bg-white/[0.07] text-white' : ''}`} title="Grup üyeleri" aria-label="Grup üyeleri"><Users className="h-5 w-5" /></button>}
           <button type="button" onClick={() => setShowPinned((show) => !show)} className={`rounded-lg p-2 text-[#94a3b8] transition-colors hover:bg-white/[0.07] hover:text-[#f8fafc] ${showPinned ? 'text-[#fbbf24]' : ''}`} title="Sabitlenmiş mesajlar" aria-label="Sabitlenmiş mesajlar"><Pin className="h-5 w-5" /></button>
         </div>
