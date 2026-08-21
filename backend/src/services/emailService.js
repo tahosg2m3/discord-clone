@@ -92,15 +92,15 @@ async function sendSecurityCode(email, username, code, { subject, heading, descr
 
 function sendTwoFactorCode(email, username, code) {
   return sendSecurityCode(email, username, code, {
-    subject: 'Discord Clone giriş doğrulama kodun',
+    subject: 'tahosapp giriş doğrulama kodun',
     heading: 'Giriş doğrulaması',
-    description: 'Discord Clone hesabına giriş için doğrulama kodun:',
+    description: 'tahosapp hesabına giriş için doğrulama kodun:',
   });
 }
 
 function sendPasswordResetCode(email, username, code) {
   return sendSecurityCode(email, username, code, {
-    subject: 'Discord Clone şifre sıfırlama kodun',
+    subject: 'tahosapp şifre sıfırlama kodun',
     heading: 'Şifre sıfırlama',
     description: 'Şifreni sıfırlamak için doğrulama kodun:',
   });
@@ -108,7 +108,7 @@ function sendPasswordResetCode(email, username, code) {
 
 function sendEmailChangeCode(email, username, code) {
   return sendSecurityCode(email, username, code, {
-    subject: 'Discord Clone e-posta değişikliği kodun',
+    subject: 'tahosapp e-posta değişikliği kodun',
     heading: 'E-posta değişikliğini onayla',
     description: 'Bu e-posta adresini hesabına bağlamak için doğrulama kodun:',
   });

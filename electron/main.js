@@ -29,6 +29,18 @@ try {
 // Do not trust an ambient NODE_ENV in an installed application: a machine-wide
 // development value must never make a packaged build load localhost content.
 const isDev = !app.isPackaged;
+// Ürün adı tahosapp olarak değiştiğinde mevcut kurulumların şifreli yerel
+// verilerini kaybetme. Eski veri klasörü varsa ve yeni klasör henüz yoksa
+// yalnız o kurulum için eski güvenli konumu kullan; temiz kurulumlar tahosapp
+// klasörünü kullanır.
+if (!isDev) {
+  const appDataPath = app.getPath('appData');
+  const currentUserDataPath = app.getPath('userData');
+  const legacyUserDataPath = path.join(appDataPath, 'Discord Clone');
+  if (!fs.existsSync(currentUserDataPath) && fs.existsSync(legacyUserDataPath)) {
+    app.setPath('userData', legacyUserDataPath);
+  }
+}
 const APP_SCHEME = 'discord-clone';
 const APP_HOST = 'app';
 const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
@@ -407,7 +419,7 @@ async function startPackagedBackend() {
         allowPlaintextStateMigration,
       ),
       stdio: 'inherit',
-      serviceName: 'Discord Clone Backend',
+      serviceName: 'tahosapp Backend',
     });
     if (dataKey.external) delete process.env.DATA_ENCRYPTION_KEY;
     delete process.env.ALLOW_PLAINTEXT_STATE_MIGRATION;
@@ -566,6 +578,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    icon: path.join(__dirname, 'assets', 'tahosapp-icon.png'),
     webPreferences: {
       nodeIntegration: false,
       nodeIntegrationInWorker: false,
@@ -582,6 +595,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
     backgroundColor: '#1a1b1e',
+    autoHideMenuBar: !isDev,
     show: false,
   });
 
@@ -642,7 +656,9 @@ function createWindow() {
     },
   ];
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  // Kurulu uygulamada tarayıcı hissi veren File/Edit/View/Window menüsünü
+  // tamamen kaldır. Geliştirme sırasında hata ayıklama menüsü kullanılabilir.
+  Menu.setApplicationMenu(isDev ? Menu.buildFromTemplate(template) : null);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -718,7 +734,7 @@ if (!ownsSingleInstance) {
     const backendReady = await waitForPackagedBackend();
     if (!backendReady) {
       dialog.showErrorBox(
-        'Discord Clone başlatılamadı',
+        'tahosapp başlatılamadı',
         `Yerel servis 127.0.0.1:${BACKEND_PORT} adresinde başlatılamadı. Bu portu kullanan başka bir programı kapatıp tekrar deneyin.`,
       );
       app.quit();
