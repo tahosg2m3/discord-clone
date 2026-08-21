@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Mic, MicOff, MonitorUp, Music, PhoneOff, Settings, Users, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
 import { useSocket } from '../../context/SocketContext';
+import { applyAudioOutputDevice, registerAudioOutputTarget } from '../../services/audioOutputService';
 
 function RemoteAudio({ stream, muted, outputDeviceId }) {
   const audioRef = useRef(null);
@@ -13,17 +14,24 @@ function RemoteAudio({ stream, muted, outputDeviceId }) {
   }, [stream]);
 
   useEffect(() => {
-    if (!audioRef.current || !outputDeviceId || typeof audioRef.current.setSinkId !== 'function') return;
-    audioRef.current.setSinkId(outputDeviceId).catch(() => {});
+    if (!audioRef.current) return undefined;
+    void applyAudioOutputDevice(audioRef.current, outputDeviceId);
+    return undefined;
   }, [outputDeviceId]);
+
+  useEffect(() => {
+    if (!audioRef.current) return undefined;
+    return registerAudioOutputTarget(audioRef.current);
+  }, []);
 
   return <audio ref={audioRef} autoPlay playsInline muted={muted} />;
 }
 
-function playSynthSound(soundId) {
+async function playSynthSound(soundId) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return;
   const audioContext = new AudioContextClass();
+  const unregisterOutput = registerAudioOutputTarget(audioContext);
   const patterns = {
     tada: [[523, 0], [659, 0.12], [784, 0.24], [1046, 0.38]],
     alert: [[880, 0], [440, 0.16], [880, 0.32]],
@@ -31,6 +39,13 @@ function playSynthSound(soundId) {
     boop: [[740, 0], [520, 0.12]],
   };
   const notes = patterns[soundId] || patterns.boop;
+  const routed = await applyAudioOutputDevice(audioContext);
+  if (!routed) {
+    unregisterOutput();
+    await audioContext.close().catch(() => {});
+    return;
+  }
+  await audioContext.resume().catch(() => {});
   notes.forEach(([frequency, offset], index) => {
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
@@ -42,7 +57,10 @@ function playSynthSound(soundId) {
     oscillator.connect(gain).connect(audioContext.destination);
     oscillator.start(audioContext.currentTime + offset);
     oscillator.stop(audioContext.currentTime + offset + 0.18);
-    if (index === notes.length - 1) oscillator.onended = () => audioContext.close().catch(() => {});
+    if (index === notes.length - 1) oscillator.onended = () => {
+      unregisterOutput();
+      audioContext.close().catch(() => {});
+    };
   });
 }
 

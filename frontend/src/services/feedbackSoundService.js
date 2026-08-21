@@ -1,3 +1,9 @@
+import {
+  applyAudioOutputDevice,
+  getSelectedAudioOutputDeviceId,
+  registerAudioOutputTarget,
+} from './audioOutputService';
+
 // Bu klasöre sonradan eklenen MP3/WAV/OGG dosyaları Vite tarafından otomatik
 // olarak bulunur. Yeni ses ekledikten sonra geliştirme sunucusunu yeniden başlat.
 const discoveredSoundAssets = import.meta.glob('../assets/sounds/feedback/*.{mp3,wav,ogg}', {
@@ -91,19 +97,33 @@ export function playFeedbackSound(soundId, options = {}) {
     audio.preload = 'auto';
     audio.volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
 
-    const play = () => {
-      const result = audio.play();
-      if (result?.catch) return result.catch(reportPlaybackError);
-      return Promise.resolve();
+    const play = () => Promise.resolve(audio.play());
+
+    const playDirectlyOnSelectedOutput = () => {
+      const unregisterOutput = registerAudioOutputTarget(audio);
+      const cleanupOutput = () => unregisterOutput();
+      audio.addEventListener('ended', cleanupOutput, { once: true });
+      audio.addEventListener('error', cleanupOutput, { once: true });
+      void applyAudioOutputDevice(audio).then(play).catch((error) => {
+        cleanupOutput();
+        reportPlaybackError(error);
+      });
+      return true;
     };
 
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!Number.isFinite(gainAmount) || gainAmount <= 1 || !AudioContextClass) {
-      void play();
-      return true;
+      return playDirectlyOnSelectedOutput();
     }
 
     const audioContext = new AudioContextClass();
+    // Seçili özel aygıtı AudioContext'e yönlendiremeyen eski ortamlarda
+    // yükseltme efektinden vazgeçip HTMLAudioElement yolunu kullanırız. Böylece
+    // ses yüksekliği yerine yanlış hoparlörden çalma hatasını tercih etmeyiz.
+    if (getSelectedAudioOutputDeviceId() && typeof audioContext.setSinkId !== 'function') {
+      void audioContext.close().catch(() => {});
+      return playDirectlyOnSelectedOutput();
+    }
     const source = audioContext.createMediaElementSource(audio);
     const gainNode = audioContext.createGain();
     const compressor = audioContext.createDynamicsCompressor();
@@ -114,17 +134,19 @@ export function playFeedbackSound(soundId, options = {}) {
     source.connect(gainNode).connect(compressor).connect(audioContext.destination);
 
     let cleaned = false;
+    const unregisterOutput = registerAudioOutputTarget(audioContext);
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       source.disconnect();
       gainNode.disconnect();
       compressor.disconnect();
+      unregisterOutput();
       void audioContext.close().catch(() => {});
     };
     audio.addEventListener('ended', cleanup, { once: true });
     audio.addEventListener('error', cleanup, { once: true });
-    void audioContext.resume().then(play).catch((error) => {
+    void applyAudioOutputDevice(audioContext).then(() => audioContext.resume()).then(play).catch((error) => {
       cleanup();
       reportPlaybackError(error);
     });
@@ -152,16 +174,21 @@ export function startFeedbackSoundLoop(soundId, options = {}) {
 
   let stopped = false;
   let timer = null;
+  const unregisterOutput = registerAudioOutputTarget(audio);
   const stop = () => {
     if (stopped) return;
     stopped = true;
     if (timer) window.clearTimeout(timer);
     audio.pause();
     audio.currentTime = 0;
+    unregisterOutput();
   };
 
-  const result = audio.play();
-  result?.catch?.(reportPlaybackError);
+  void applyAudioOutputDevice(audio).then(() => {
+    if (stopped) return;
+    const result = audio.play();
+    result?.catch?.(reportPlaybackError);
+  }).catch(reportPlaybackError);
   timer = window.setTimeout(stop, maxDurationMs);
   return stop;
 }

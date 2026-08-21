@@ -8,6 +8,7 @@ import {
   RNNOISE_SAMPLE_RATE,
 } from '../services/rnnoiseProcessor';
 import { FEEDBACK_SOUND_IDS, playFeedbackSound } from '../services/feedbackSoundService';
+import { setGlobalAudioOutputDevice } from '../services/audioOutputService';
 
 const VoiceContext = createContext(null);
 
@@ -435,7 +436,9 @@ export const VoiceProvider = ({ children }) => {
   }, [socket]);
 
   useEffect(() => { inputDeviceIdRef.current = inputDeviceId; localStorage.setItem('voice:input-device', inputDeviceId); }, [inputDeviceId]);
-  useEffect(() => { localStorage.setItem('voice:output-device', outputDeviceId); }, [outputDeviceId]);
+  useEffect(() => {
+    void setGlobalAudioOutputDevice(outputDeviceId);
+  }, [outputDeviceId]);
   useEffect(() => { cameraDeviceIdRef.current = cameraDeviceId; localStorage.setItem('voice:camera-device', cameraDeviceId); }, [cameraDeviceId]);
   useEffect(() => { voiceModeRef.current = voiceMode; localStorage.setItem('voice:mode', voiceMode); }, [voiceMode]);
   useEffect(() => { localStorage.setItem('voice:ptt-key', pushToTalkKey); }, [pushToTalkKey]);

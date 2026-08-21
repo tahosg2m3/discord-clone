@@ -100,6 +100,14 @@ export const deleteChannel = (id) => request(`/channels/${id}`, { method: 'DELET
 
 // Users & Friends
 export const fetchUsers = () => request('/users');
+export const fetchUserProfile = (userId, serverId = '') => {
+  const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
+  return request(`/users/${encodeURIComponent(userId)}/profile${query}`);
+};
+export const savePrivateUserNote = (userId, note) => request(`/users/${encodeURIComponent(userId)}/note`, {
+  method: 'PUT',
+  body: JSON.stringify({ note }),
+});
 export const fetchFriends = (userId) => request(`/friends/${userId}`);
 export const fetchPendingRequests = (userId) => request(`/friends/${userId}/pending`);
 export const sendFriendRequest = (fromUserId, targetUsername) => request('/friends/request', { method: 'POST', body: JSON.stringify({ fromUserId, targetUsername }) });

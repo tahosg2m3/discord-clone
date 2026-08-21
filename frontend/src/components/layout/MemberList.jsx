@@ -22,7 +22,7 @@ export default function MemberList() {
   const { currentServer } = useServer();
   const { socket, isPresenceReady } = useSocket();
   const [members, setMembers] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedProfile, setSelectedProfile] = useState(null);
 
   const loadMembers = useCallback(() => {
     if (!currentServer?.id) return;
@@ -98,7 +98,13 @@ export default function MemberList() {
             <button
               type="button"
               key={member.id}
-              onClick={() => setSelectedUser(member)}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setSelectedProfile({
+                  user: member,
+                  anchorRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+                });
+              }}
               className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.06]"
             >
               <div className="relative shrink-0">
@@ -145,10 +151,11 @@ export default function MemberList() {
 
   return (
     <>
-      {selectedUser && (
+      {selectedProfile && (
         <UserPopover
-          targetUser={selectedUser}
-          onClose={() => setSelectedUser(null)}
+          targetUser={selectedProfile.user}
+          anchorRect={selectedProfile.anchorRect}
+          onClose={() => setSelectedProfile(null)}
         />
       )}
 

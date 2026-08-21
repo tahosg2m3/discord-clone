@@ -189,6 +189,10 @@ class InMemoryStorage {
     this.serverModeration = new Map();
     this.serverMemberProfiles = new Map();
     this.userBlocks = new Map();
+    // Notlar yalnızca notu yazan kullanıcıya aittir. Anahtar biçimi
+    // `viewerUserId:targetUserId` olduğu için başka bir kullanıcı aynı profil
+    // için yazılan notu okuyamaz.
+    this.profileNotes = new Map();
     // Discord benzeri platform özellikleri kendi sürümlü alanında tutulur.
     // Düz obje kullanmak eski JSON/SQLite snapshot biçimiyle geriye uyumludur;
     // ayrıntılı normalizasyonu platformService üstlenir.
@@ -232,6 +236,7 @@ class InMemoryStorage {
       this.serverModeration = parsePersistedMap(data.serverModeration);
       this.serverMemberProfiles = parsePersistedMap(data.serverMemberProfiles);
       this.userBlocks = parsePersistedMap(data.userBlocks);
+      this.profileNotes = parsePersistedMap(data.profileNotes);
       this.platformState = data.platformState && typeof data.platformState === 'object' && !Array.isArray(data.platformState)
         ? data.platformState
         : {
@@ -338,6 +343,7 @@ class InMemoryStorage {
       serverModeration: JSON.stringify(Array.from(this.serverModeration.entries())),
       serverMemberProfiles: JSON.stringify(Array.from(this.serverMemberProfiles.entries())),
       userBlocks: JSON.stringify(Array.from(this.userBlocks.entries())),
+      profileNotes: JSON.stringify(Array.from(this.profileNotes.entries())),
       platformState: this.platformState,
     };
   }
@@ -391,13 +397,16 @@ class InMemoryStorage {
     let changed = false;
     const validUserIds = new Set(this.users.map(user => user.id));
 
-    for (const [serverId, rawProfiles] of this.serverMemberProfiles.entries()) {
+    for (const [serverId, memberList] of this.serverMembers.entries()) {
+      const rawProfiles = this.serverMemberProfiles.get(serverId);
       const memberIds = new Set(this.serverMembers.get(serverId) || []);
+      const server = this.getServerById(serverId);
       const profiles = rawProfiles && typeof rawProfiles === 'object' && !Array.isArray(rawProfiles)
         ? rawProfiles
         : {};
       const cleaned = {};
-      Object.entries(profiles).forEach(([userId, profile]) => {
+      (Array.isArray(memberList) ? memberList : []).forEach(userId => {
+        const profile = profiles[userId] && typeof profiles[userId] === 'object' ? profiles[userId] : {};
         if (!memberIds.has(userId) || !profile || typeof profile !== 'object') {
           changed = true;
           return;
@@ -409,14 +418,36 @@ class InMemoryStorage {
         } catch (_) {
           changed = true;
         }
-        if (nickname || serverAvatar) cleaned[userId] = {
+        const user = this.getUserById(userId);
+        const joinedAt = Number(profile.joinedAt)
+          || Math.max(Number(server?.createdAt) || 0, Number(user?.createdAt) || 0)
+          || Date.now();
+        cleaned[userId] = {
           nickname: nickname || null,
           serverAvatar,
-          updatedAt: Number(profile.updatedAt) || Date.now(),
+          joinedAt,
+          updatedAt: Number(profile.updatedAt) || joinedAt,
         };
       });
       if (JSON.stringify(profiles) !== JSON.stringify(cleaned)) changed = true;
       this.serverMemberProfiles.set(serverId, cleaned);
+    }
+
+    for (const [key, rawNote] of this.profileNotes.entries()) {
+      const [viewerId, targetId, ...extra] = String(key).split(':');
+      if (extra.length || !validUserIds.has(viewerId) || !validUserIds.has(targetId) || viewerId === targetId) {
+        this.profileNotes.delete(key);
+        changed = true;
+        continue;
+      }
+      const cleanNote = typeof rawNote === 'string' ? rawNote.trim().slice(0, 256) : '';
+      if (!cleanNote) {
+        this.profileNotes.delete(key);
+        changed = true;
+      } else if (cleanNote !== rawNote) {
+        this.profileNotes.set(key, cleanNote);
+        changed = true;
+      }
     }
 
     for (const [userId, rawBlocks] of this.userBlocks.entries()) {
@@ -663,6 +694,14 @@ class InMemoryStorage {
     if (members.includes(userId)) return false;
 
     members.push(userId);
+    const profiles = this.serverMemberProfiles.get(serverId) || {};
+    profiles[userId] = {
+      nickname: null,
+      serverAvatar: null,
+      joinedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.serverMemberProfiles.set(serverId, profiles);
     // Eski/temiz kurulumdaki Genel Sunucu sahipsiz kalmasın: ilk gerçek üye
     // sahibi olur. Böylece rol ve kanal ayarları kilitlenmez.
     if (server.id === 'default-server' && server.creatorId === 'system') {
@@ -711,6 +750,7 @@ class InMemoryStorage {
       userId,
       nickname: profile.nickname || null,
       serverAvatar: profile.serverAvatar || null,
+      joinedAt: Number(profile.joinedAt) || null,
       updatedAt: profile.updatedAt || null,
     };
   }
@@ -735,12 +775,9 @@ class InMemoryStorage {
       next.serverAvatar = sanitizeMediaUrl(updates.serverAvatar, 'Sunucu avatarı');
     }
 
-    if (next.nickname || next.serverAvatar) {
-      next.updatedAt = Date.now();
-      profiles[userId] = next;
-    } else {
-      delete profiles[userId];
-    }
+    next.joinedAt = Number(current.joinedAt) || Date.now();
+    next.updatedAt = Date.now();
+    profiles[userId] = next;
     this.serverMemberProfiles.set(serverId, profiles);
     this.saveData();
     return this.getServerMemberProfile(serverId, userId);
@@ -1337,6 +1374,80 @@ class InMemoryStorage {
       })
       .filter(Boolean);
   }
+
+  getFriendship(userId1, userId2) {
+    const [id1, id2] = [userId1, userId2].sort();
+    return this.friendships.find(friendship => friendship.user1Id === id1 && friendship.user2Id === id2) || null;
+  }
+
+  getPendingFriendRelationship(viewerUserId, targetUserId) {
+    const request = this.friendRequests.find(item => (
+      item.status === 'pending'
+      && ((item.fromUserId === viewerUserId && item.toUserId === targetUserId)
+        || (item.fromUserId === targetUserId && item.toUserId === viewerUserId))
+    ));
+    if (!request) return null;
+    return {
+      id: request.id,
+      direction: request.fromUserId === viewerUserId ? 'outgoing' : 'incoming',
+      createdAt: request.createdAt || null,
+    };
+  }
+
+  getMutualFriends(viewerUserId, targetUserId) {
+    const viewerFriendIds = new Set(this.friendships.flatMap(friendship => {
+      if (friendship.user1Id === viewerUserId) return [friendship.user2Id];
+      if (friendship.user2Id === viewerUserId) return [friendship.user1Id];
+      return [];
+    }));
+
+    return this.friendships
+      .flatMap(friendship => {
+        if (friendship.user1Id === targetUserId) return [friendship.user2Id];
+        if (friendship.user2Id === targetUserId) return [friendship.user1Id];
+        return [];
+      })
+      .filter(friendId => viewerFriendIds.has(friendId))
+      .map(friendId => {
+        const user = publicUser(this.getUserById(friendId));
+        return user ? { ...user, status: this.getUserStatus(friendId) } : null;
+      })
+      .filter(Boolean);
+  }
+
+  getMutualServers(viewerUserId, targetUserId) {
+    return this.servers
+      .filter(server => (
+        !server.isDM
+        && this.isServerMember(server.id, viewerUserId)
+        && this.isServerMember(server.id, targetUserId)
+      ))
+      .map(server => ({
+        id: server.id,
+        name: server.name,
+        icon: server.icon || null,
+        banner: server.banner || null,
+        memberCount: (this.serverMembers.get(server.id) || []).length,
+        createdAt: server.createdAt || null,
+      }));
+  }
+
+  getProfileNote(viewerUserId, targetUserId) {
+    return this.profileNotes.get(`${viewerUserId}:${targetUserId}`) || '';
+  }
+
+  setProfileNote(viewerUserId, targetUserId, value) {
+    if (!this.getUserById(viewerUserId) || !this.getUserById(targetUserId) || viewerUserId === targetUserId) {
+      return null;
+    }
+    const note = sanitizeText(value, { field: 'Not', maxLength: 256, nullable: true });
+    const key = `${viewerUserId}:${targetUserId}`;
+    if (note) this.profileNotes.set(key, note);
+    else this.profileNotes.delete(key);
+    this.saveData();
+    return note || '';
+  }
+
   removeFriend(userId1, userId2) {
     const [id1, id2] = [userId1, userId2].sort();
     const index = this.friendships.findIndex(friendship => friendship.user1Id === id1 && friendship.user2Id === id2);
