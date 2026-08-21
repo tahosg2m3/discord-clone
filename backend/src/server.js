@@ -36,7 +36,9 @@ const dmRoutes = require('./routes/dm');
 const friendRoutes = require('./routes/friends');
 const uploadRoutes = require('./routes/upload');
 const gifRoutes = require('./routes/gifs');
+const richPresenceRoutes = require('./routes/richPresence');
 const platformRoutes = require('./routes/platform');
+const { richPresenceService } = require('./services/richPresenceService');
 
 const setupSocketHandlers = require('./sockets');
 const { startPeerServer } = require('./peerServer');
@@ -80,6 +82,7 @@ app.use('/api/dm', dmRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/gifs', gifRoutes);
+app.use('/api/rich-presence', richPresenceRoutes);
 // Yeni Discord-benzeri özellikler tam API yollarını kendi router'ında tanımlar.
 // Eski endpoint'ler yukarıda kalır ve geriye dönük uyumluluğunu korur.
 app.use('/api', platformRoutes);
@@ -96,6 +99,7 @@ app.get('/health', (req, res) => {
   });
 });
 
+richPresenceService.setIo(io);
 setupSocketHandlers(io);
 app.use(errorHandler);
 
@@ -203,6 +207,7 @@ function shutdown(signal) {
   const finish = () => {
     if (finished) return;
     finished = true;
+    richPresenceService.close();
     if (storage.close() !== true) persistenceFailed = true;
     console.log('HTTP and PeerJS servers closed');
     process.exit(persistenceFailed ? 1 : 0);

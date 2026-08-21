@@ -108,6 +108,21 @@ export const savePrivateUserNote = (userId, note) => request(`/users/${encodeURI
   method: 'PUT',
   body: JSON.stringify({ note }),
 });
+export const getRichPresenceSettings = () => request('/users/me/rich-presence');
+export const createRichPresenceToken = () => request('/users/me/rich-presence/token', { method: 'POST' });
+export const revokeRichPresenceToken = () => request('/users/me/rich-presence/token', { method: 'DELETE' });
+export const updateRichPresenceSettings = enabled => request('/users/me/rich-presence/settings', {
+  method: 'PATCH',
+  body: JSON.stringify({ enabled }),
+});
+export const setRichPresenceActivity = activity => request('/rich-presence', {
+  method: 'PUT',
+  body: JSON.stringify(activity),
+});
+export const clearRichPresenceActivity = sessionId => request(`/rich-presence/${encodeURIComponent(sessionId)}`, {
+  method: 'DELETE',
+});
+export const clearAllRichPresenceActivities = () => request('/rich-presence', { method: 'DELETE' });
 export const fetchFriends = (userId) => request(`/friends/${userId}`);
 export const fetchPendingRequests = (userId) => request(`/friends/${userId}/pending`);
 export const sendFriendRequest = (fromUserId, targetUsername) => request('/friends/request', { method: 'POST', body: JSON.stringify({ fromUserId, targetUsername }) });

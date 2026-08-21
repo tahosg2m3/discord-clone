@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { AutomaticPresenceDetector } = require('./automaticPresence');
 
 // Electron ana süreci için oluşturulabilecek Node tanı raporlarının ortam
 // değişkenlerini (örneğin harici DATA_ENCRYPTION_KEY) içermesine izin verme.
@@ -94,6 +95,8 @@ let mainWindow;
 let backendProcess;
 let backendInstanceToken;
 let isQuitting = false;
+let automaticPresenceDetector;
+let latestAutomaticPresence = [];
 
 function parseUrl(value) {
   try {
@@ -646,6 +649,32 @@ function createWindow() {
   });
 }
 
+function publishAutomaticPresence(activities) {
+  latestAutomaticPresence = Array.isArray(activities) ? activities : [];
+  if (!mainWindow || mainWindow.isDestroyed() || !isTrustedTopLevelUrl(mainWindow.webContents.getURL())) return;
+  mainWindow.webContents.send('automatic-presence:update', latestAutomaticPresence);
+}
+
+function startAutomaticPresence() {
+  if (process.platform !== 'win32') return { supported: false, activities: [] };
+  if (!automaticPresenceDetector) {
+    automaticPresenceDetector = new AutomaticPresenceDetector({
+      onActivities: publishAutomaticPresence,
+      onError: error => console.warn('Otomatik Rich Presence algılayıcısı:', String(error?.message || error).slice(0, 240)),
+    });
+  }
+  automaticPresenceDetector.stopping = false;
+  automaticPresenceDetector.start();
+  return { supported: true, activities: latestAutomaticPresence };
+}
+
+function stopAutomaticPresence() {
+  automaticPresenceDetector?.stop();
+  automaticPresenceDetector = null;
+  latestAutomaticPresence = [];
+  return { success: true };
+}
+
 function configurePermissions() {
   const allowedPermissions = new Set(['media', 'display-capture', 'speaker-selection']);
 
@@ -702,6 +731,7 @@ if (!ownsSingleInstance) {
   });
 
   app.on('before-quit', event => {
+    stopAutomaticPresence();
     if (isDev || !backendProcess || isQuitting) return;
     event.preventDefault();
     isQuitting = true;
@@ -719,5 +749,15 @@ if (!ownsSingleInstance) {
   ipcMain.handle('get-app-path', event => {
     if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return null;
     return app.getPath('userData');
+  });
+
+  ipcMain.handle('automatic-presence:start', event => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return { supported: false, activities: [] };
+    return startAutomaticPresence();
+  });
+
+  ipcMain.handle('automatic-presence:stop', event => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return { success: false };
+    return stopAutomaticPresence();
   });
 }

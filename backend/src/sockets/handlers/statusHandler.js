@@ -1,4 +1,5 @@
 const storage = require('../../storage/inMemory');
+const { richPresenceService } = require('../../services/richPresenceService');
 
 function socketIdentity(socket) {
   const userId = socket.authUser?.id;
@@ -63,6 +64,7 @@ exports.handleStatusChange = (io, socket, data = {}) => {
     const publicStatus = visibleStatus(status);
     storage.updateUserStatus(user.id, publicStatus);
     broadcastStatus(io, updatedUser, status);
+    richPresenceService.broadcast(user.id);
     io.to(`user:${user.id}`).emit('status:update:self', {
       userId: user.id,
       status,

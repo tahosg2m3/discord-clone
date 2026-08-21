@@ -4,6 +4,7 @@ const { rateLimit } = require('express-rate-limit');
 const storage = require('../storage/inMemory');
 const { requireAuth } = require('../middleware/auth');
 const { createRateLimitOptions } = require('../middleware/rateLimit');
+const { richPresenceService } = require('../services/richPresenceService');
 
 const router = express.Router();
 const authRateLimit = rateLimit(createRateLimitOptions('auth', 'users'));
@@ -40,29 +41,46 @@ function emitSocialUpdate(req, userIds) {
   });
 }
 
+function safeActivityImage(value) {
+  const candidate = String(value || '').trim();
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(candidate)) return candidate;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
 function safeActivity(activity, index) {
   if (!activity || typeof activity !== 'object') return null;
   const name = String(activity.name || '').trim().slice(0, 80);
   if (!name) return null;
-  let imageUrl = null;
-  const candidate = String(activity.imageUrl || activity.image || '').trim();
-  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(candidate)) imageUrl = candidate;
-  else {
-    try {
-      const parsed = new URL(candidate);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') imageUrl = parsed.href;
-    } catch (_) {
-      imageUrl = null;
-    }
-  }
   return {
     id: String(activity.id || `activity-${index}`).slice(0, 100),
+    sessionId: String(activity.sessionId || activity.id || `activity-${index}`).slice(0, 100),
     name,
     details: String(activity.details || '').trim().slice(0, 160),
     state: String(activity.state || '').trim().slice(0, 160),
-    imageUrl,
+    imageUrl: safeActivityImage(activity.imageUrl || activity.image),
     startedAt: Number(activity.startedAt) || null,
+    endsAt: Number(activity.endsAt) || null,
+    updatedAt: Number(activity.updatedAt) || null,
+    expiresAt: Number(activity.expiresAt) || null,
     type: String(activity.type || 'playing').trim().slice(0, 24),
+    category: String(activity.category || '').trim().slice(0, 24),
+    provider: String(activity.provider || '').trim().slice(0, 40),
+    playbackStatus: String(activity.playbackStatus || '').trim().slice(0, 24),
+    hideElapsed: Boolean(activity.hideElapsed),
+    smallImageUrl: safeActivityImage(activity.smallImageUrl),
+    imageText: String(activity.imageText || '').trim().slice(0, 80),
+    smallImageText: String(activity.smallImageText || '').trim().slice(0, 80),
+    progress: activity.progress || null,
+    party: activity.party || null,
+    music: activity.music || null,
+    metadata: activity.metadata && typeof activity.metadata === 'object' ? activity.metadata : {},
+    buttons: Array.isArray(activity.buttons) ? activity.buttons.slice(0, 2) : [],
   };
 }
 
@@ -76,6 +94,30 @@ router.post('/login', (req, res) => res.status(410).json({
 router.get('/', (req, res) => res.json(storage.getPublicUsers()));
 
 router.get('/me', (req, res) => res.json({ user: privateUser(req.user) }));
+
+router.get('/me/rich-presence', (req, res) => {
+  res.json(richPresenceService.getManagementState(req.user.id));
+});
+
+router.post('/me/rich-presence/token', (req, res) => {
+  try {
+    return res.status(201).json(richPresenceService.createToken(req.user.id));
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Entegrasyon anahtarı oluşturulamadı.' });
+  }
+});
+
+router.delete('/me/rich-presence/token', (req, res) => {
+  const revoked = richPresenceService.revokeToken(req.user.id);
+  return res.json({ success: true, revoked });
+});
+
+router.patch('/me/rich-presence/settings', (req, res) => {
+  if (typeof req.body?.enabled !== 'boolean') {
+    return res.status(400).json({ error: 'Etkin ayarı true veya false olmalıdır.' });
+  }
+  return res.json(richPresenceService.setEnabled(req.user.id, req.body.enabled));
+});
 
 router.patch('/me', async (req, res) => {
   const allowedFields = [
@@ -137,7 +179,7 @@ router.get('/:userId/profile', (req, res) => {
   const viewerMember = server ? storage.getServerMemberDetails(server.id, req.user.id) : null;
   const friendship = storage.getFriendship(req.user.id, targetUserId);
   const pendingRequest = storage.getPendingFriendRelationship(req.user.id, targetUserId);
-  const activities = (Array.isArray(target.activities) ? target.activities : [])
+  const activities = richPresenceService.getActivities(targetUserId, { includeHidden: req.user.id === targetUserId })
     .map(safeActivity)
     .filter(Boolean)
     .slice(0, 10);

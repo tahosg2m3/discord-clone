@@ -4,6 +4,7 @@ const { rateLimit } = require('express-rate-limit');
 const storage = require('../storage/inMemory');
 const { requireAuth } = require('../middleware/auth');
 const { createRateLimitOptions } = require('../middleware/rateLimit');
+const { richPresenceService } = require('../services/richPresenceService');
 
 const router = express.Router();
 const authRateLimit = rateLimit(createRateLimitOptions('auth', 'friends'));
@@ -23,7 +24,10 @@ router.get('/:userId/pending', (req, res) => {
 
 router.get('/:userId', (req, res) => {
   if (req.params.userId !== req.user.id) return res.status(403).json({ error: 'Bu arkadaş listesine erişim yetkin yok.' });
-  return res.json(storage.getUserFriends(req.user.id));
+  return res.json(storage.getUserFriends(req.user.id).map(friend => ({
+    ...friend,
+    activities: richPresenceService.getActivities(friend.id),
+  })));
 });
 
 router.post('/request', (req, res) => {

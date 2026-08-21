@@ -35,8 +35,10 @@ import { blockUser, createReport, unblockUser } from '../../services/platformApi
 import { useAuth } from '../../context/AuthContext';
 import { useDM } from '../../context/DMContext';
 import { useServer } from '../../context/ServerContext';
+import { useSocket } from '../../context/SocketContext';
 import { getColorForString } from '../../utils/colors';
 import { resolveSafeMediaUrl } from '../../utils/safeMediaUrl';
+import RichPresenceCard from './RichPresenceCard';
 
 const PRESENCE_STYLES = {
   online: 'bg-[#23a559]',
@@ -75,7 +77,7 @@ function stopEvent(event) {
 function getCompactPosition(anchorRect) {
   if (!anchorRect || typeof window === 'undefined') return null;
   const cardWidth = Math.min(350, window.innerWidth - 24);
-  const estimatedHeight = 430;
+  const estimatedHeight = 560;
   const gap = 12;
   const left = anchorRect.left > window.innerWidth / 2
     ? anchorRect.left - cardWidth - gap
@@ -441,23 +443,9 @@ function FullProfileModal({
               <section className="pt-8">
                 <h2 className="mb-4 text-base font-medium text-[#949ba4]">Son Etkinlik</h2>
                 <div className="space-y-3">
-                  {activities.length ? activities.map(activity => {
-                    const imageUrl = resolveSafeMediaUrl(activity.imageUrl);
-                    return (
-                      <article key={activity.id} className="flex min-h-32 items-center gap-5 rounded-2xl bg-[#1e1f22] px-5 py-5 text-[#dbdee1] transition-colors hover:bg-[#232428]">
-                        <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#2b2d31]">
-                          {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" /> : <Gamepad2 className="h-11 w-11 text-[#949ba4]" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h3 className="truncate text-xl font-bold">{activity.name}</h3>
-                          {activity.details && <p className="mt-1 truncate text-base text-[#b5bac1]">{activity.details}</p>}
-                          {activity.state && <p className="truncate text-sm text-[#949ba4]">{activity.state}</p>}
-                          <p className="mt-2 inline-flex items-center gap-2 text-sm text-[#949ba4]"><Gamepad2 className="h-4 w-4" /> {formatActivityTime(activity.startedAt)}</p>
-                        </div>
-                        <MoreHorizontal className="h-6 w-6 self-start text-[#949ba4]" />
-                      </article>
-                    );
-                  }) : (
+                  {activities.length ? activities.map(activity => (
+                    <RichPresenceCard key={activity.sessionId || activity.id} activity={activity} />
+                  )) : (
                     <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/[0.1] text-center">
                       <Gamepad2 className="h-12 w-12 text-[#4e5058]" />
                       <p className="mt-4 font-semibold text-[#b5bac1]">Yakın zamanda etkinlik yok</p>
@@ -516,6 +504,7 @@ function FullProfileModal({
 
 export default function UserPopover({ targetUser, onClose, anchorRect = null }) {
   const { user: currentUser } = useAuth();
+  const { socket } = useSocket();
   const { setActiveDM } = useDM();
   const { currentServer, setCurrentServer } = useServer();
   const baseUser = useMemo(() => ({ ...(targetUser?.user || {}), ...(targetUser || {}) }), [targetUser]);
@@ -550,6 +539,16 @@ export default function UserPopover({ targetUser, onClose, anchorRect = null }) 
     return () => { active = false; };
   }, [targetId, currentServer?.id]);
 
+  useEffect(() => {
+    if (!socket || !targetId) return undefined;
+    const handleRichPresenceUpdate = payload => {
+      if (String(payload?.userId || '') !== String(targetId)) return;
+      setDetails(previous => previous ? { ...previous, activities: payload.activities || [] } : previous);
+    };
+    socket.on('rich-presence:update', handleRichPresenceUpdate);
+    return () => socket.off('rich-presence:update', handleRichPresenceUpdate);
+  }, [socket, targetId]);
+
   const profile = { ...baseUser, ...(details?.user || {}) };
   const member = details?.serverMember || baseUser;
   const relationship = details?.relationship || { isSelf: currentUser?.id === targetId };
@@ -560,6 +559,7 @@ export default function UserPopover({ targetUser, onClose, anchorRect = null }) 
   const roles = member?.roles || baseUser.roles || [];
   const mutualFriends = details?.mutualFriends || [];
   const mutualServers = details?.mutualServers || [];
+  const activities = details?.activities || [];
   const presence = profile.status || profile.presenceStatus || 'offline';
   const canManageRoles = Boolean(details?.viewer?.canManageRoles && currentServer?.id && !relationship.isSelf);
   const compactPosition = getCompactPosition(anchorRect);
@@ -754,6 +754,7 @@ export default function UserPopover({ targetUser, onClose, anchorRect = null }) 
               <ProfileBadges verified={profile.emailVerified} isOwner={member?.isOwner} isFriend={relationship.isFriend} />
             </p>
             {profile.customStatus && <p className="mt-2 text-sm text-[#b5bac1]">{profile.customStatus}</p>}
+            {activities[0] && <div className="mt-3"><RichPresenceCard activity={activities[0]} compact /></div>}
           </div>
 
           <button
