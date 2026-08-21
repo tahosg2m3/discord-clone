@@ -1,15 +1,20 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'friends'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'friends'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'friends'));
 
 function emitFriendUpdate(req, userId) {
   req.app.get('io')?.to(`user:${userId}`).emit('friends:changed', { userId });
 }
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 router.get('/:userId/pending', (req, res) => {
   if (req.params.userId !== req.user.id) return res.status(403).json({ error: 'Bu isteklere erişim yetkin yok.' });

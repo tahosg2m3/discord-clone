@@ -162,12 +162,12 @@ async function startServices() {
   const migratedPasswordCount = await migrateLegacyPlaintextPasswords();
   if (isShuttingDown) return;
   if (migratedPasswordCount) {
-    console.log(`🔐 ${migratedPasswordCount} eski parola Argon2id biçimine güvenle taşındı.`);
+    console.log('🔐 Eski parolalar Argon2id biçimine güvenle taşındı.');
   }
   const migratedArchivedPasswordCount = await migrateArchivedPlaintextPasswords();
   if (isShuttingDown) return;
   if (migratedArchivedPasswordCount) {
-    console.log(`🔐 Eski şifreli snapshot'lardaki ${migratedArchivedPasswordCount} parola Argon2id biçimine taşındı.`);
+    console.log("🔐 Eski şifreli snapshot'lardaki parolalar Argon2id biçimine taşındı.");
   }
 
   server.listen(PORT, HOST, () => {

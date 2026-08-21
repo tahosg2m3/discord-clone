@@ -1,12 +1,17 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { platformService } = require('../services/platformService');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 const { requireServerMember, requireServerOwner } = require('../middleware/authorization');
 const { emitAudit, emitToServerMembers, getChannelViewerSockets } = require('../sockets/authorizedEmit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'servers'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'servers'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'servers'));
 
 function notifyMembersChanged(req, serverId) {
   req.app.get('io')?.to(`server:${serverId}`).emit('server:members-changed', { serverId });
@@ -29,17 +34,15 @@ function getTrashServer(req, res) {
   return server;
 }
 
-router.use(requireAuth);
-
 // Sadece giriş yapan kullanıcının gerçekten üye olduğu normal sunucular gösterilir.
-router.get('/', (req, res) => {
+router.get('/', authRateLimit, requireAuth, readRateLimit, (req, res) => {
   const servers = storage.getAllServers().filter(server => (
     !server.isDM && storage.isServerMember(server.id, req.user.id)
   ));
   return res.json(servers);
 });
 
-router.post('/join', (req, res) => {
+router.post('/join', authRateLimit, requireAuth, mutationRateLimit, (req, res) => {
   const inviteCode = String(req.body.inviteCode || '').trim();
   const managedInvite = platformService.getInviteByCode(inviteCode);
   const server = managedInvite
@@ -76,7 +79,7 @@ router.post('/join', (req, res) => {
   return res.json(server);
 });
 
-router.post('/', (req, res) => {
+router.post('/', authRateLimit, requireAuth, mutationRateLimit, (req, res) => {
   const name = String(req.body.name || '').trim();
   if (!name || name.length > 100) return res.status(400).json({ error: 'Geçerli bir sunucu adı gerekli.' });
 
@@ -93,7 +96,7 @@ router.post('/', (req, res) => {
   return res.status(201).json(server);
 });
 
-router.post('/:id/transfer-ownership', requireServerOwner, (req, res) => {
+router.post('/:id/transfer-ownership', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const newOwnerId = String(req.body.userId || '').trim();
   if (!newOwnerId || !storage.isServerMember(req.params.id, newOwnerId)) {
     return res.status(400).json({ error: 'Yeni sahip sunucunun bir üyesi olmalıdır.' });
@@ -115,11 +118,11 @@ router.post('/:id/transfer-ownership', requireServerOwner, (req, res) => {
   return res.json(updated);
 });
 
-router.get('/:serverId/members/me/profile', requireServerMember, (req, res) => (
+router.get('/:serverId/members/me/profile', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => (
   res.json({ profile: storage.getServerMemberProfile(req.params.serverId, req.user.id) })
 ));
 
-router.patch('/:serverId/members/me/profile', requireServerMember, (req, res) => {
+router.patch('/:serverId/members/me/profile', authRateLimit, requireAuth, mutationRateLimit, requireServerMember, (req, res) => {
   const updates = {};
   ['nickname', 'serverAvatar'].forEach(field => {
     if (Object.prototype.hasOwnProperty.call(req.body || {}, field)) updates[field] = req.body[field];
@@ -142,13 +145,13 @@ router.patch('/:serverId/members/me/profile', requireServerMember, (req, res) =>
   }
 });
 
-router.get('/:id/members', requireServerMember, (req, res) => (
+router.get('/:id/members', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => (
   res.json(storage.getServerMembersWithDetails(req.params.id))
 ));
 
-router.get('/:id', requireServerMember, (req, res) => res.json(req.server));
+router.get('/:id', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => res.json(req.server));
 
-router.patch('/:id', requireServerOwner, (req, res) => {
+router.patch('/:id', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const name = req.body.name === undefined ? undefined : String(req.body.name).trim();
   if (name !== undefined && (!name || name.length > 100)) {
     return res.status(400).json({ error: 'Geçerli bir sunucu adı gerekli.' });
@@ -186,7 +189,7 @@ router.patch('/:id', requireServerOwner, (req, res) => {
   return res.json(updated);
 });
 
-router.put('/:id', requireServerOwner, (req, res) => {
+router.put('/:id', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const name = req.body.name === undefined ? undefined : String(req.body.name).trim();
   if (name !== undefined && (!name || name.length > 100)) {
     return res.status(400).json({ error: 'Geçerli bir sunucu adı gerekli.' });
@@ -219,7 +222,7 @@ router.put('/:id', requireServerOwner, (req, res) => {
   return res.json(updated);
 });
 
-router.post('/:id/leave', requireServerMember, (req, res) => {
+router.post('/:id/leave', authRateLimit, requireAuth, mutationRateLimit, requireServerMember, (req, res) => {
   if (req.server.creatorId === req.user.id) {
     return res.status(400).json({ error: 'Sunucu sahibi sunucudan ayrılamaz. Önce sahipliği devret.' });
   }
@@ -240,13 +243,13 @@ router.post('/:id/leave', requireServerMember, (req, res) => {
   return res.json({ success: true });
 });
 
-router.get('/:id/trash', (req, res) => {
+router.get('/:id/trash', authRateLimit, requireAuth, readRateLimit, (req, res) => {
   const server = getTrashServer(req, res);
   if (!server) return undefined;
   return res.json(platformService.listTrash(server.id));
 });
 
-router.post('/:id/trash/:trashId/restore', (req, res) => {
+router.post('/:id/trash/:trashId/restore', authRateLimit, requireAuth, mutationRateLimit, (req, res) => {
   const server = getTrashServer(req, res);
   if (!server) return undefined;
   const result = platformService.restoreTrash(server.id, req.params.trashId);
@@ -272,7 +275,7 @@ router.post('/:id/trash/:trashId/restore', (req, res) => {
   return res.json(result);
 });
 
-router.delete('/:id/trash/:trashId', (req, res) => {
+router.delete('/:id/trash/:trashId', authRateLimit, requireAuth, mutationRateLimit, (req, res) => {
   const server = getTrashServer(req, res);
   if (!server) return undefined;
   if (!platformService.purgeTrash(server.id, req.params.trashId)) {
@@ -296,7 +299,7 @@ router.delete('/:id/trash/:trashId', (req, res) => {
   return res.json({ success: true });
 });
 
-router.delete('/:id', requireServerOwner, (req, res) => {
+router.delete('/:id', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const serverId = req.params.id;
   platformService.deleteServerData(serverId);
   if (!storage.deleteServer(serverId)) return res.status(404).json({ error: 'Sunucu bulunamadı.' });

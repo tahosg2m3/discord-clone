@@ -11,11 +11,13 @@ import {
   updateGroupDM,
 } from '../../services/api';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import GroupDMAvatar from './GroupDMAvatar';
 
 function MemberAvatar({ member }) {
-  if (member?.avatar && !member.avatar.includes('ui-avatars.com')) {
-    return <img src={member.avatar} alt="" className="h-9 w-9 rounded-full object-cover" />;
+  const avatarUrl = resolveSafeAvatarUrl(member?.avatar);
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white" style={{ backgroundColor: getColorForString(member?.username || member?.id || '?') }}>

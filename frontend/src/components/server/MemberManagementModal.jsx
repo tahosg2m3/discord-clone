@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import { banMember } from '../../services/platformApi';
 import {
   assignMemberRoles,
@@ -229,6 +230,7 @@ export default function MemberManagementModal({
               const id = member.id || member.userId || profile.id;
               const name = memberName(member);
               const color = getColorForString(name);
+              const avatarUrl = resolveSafeAvatarUrl(profile.avatar);
               const roleIds = getMemberRoleIds(member);
               const memberRoles = roles.filter((role) => roleIds.includes(role.id));
               const menuOpen = openMenuId === id;
@@ -238,8 +240,8 @@ export default function MemberManagementModal({
                 <div key={id} className={`relative px-4 py-3 ${index ? 'border-t border-black/20' : ''}`}>
                   <div className="flex items-start gap-3">
                     <div className="relative mt-0.5 shrink-0">
-                      {profile.avatar && !profile.avatar.includes('ui-avatars.com') ? (
-                        <img src={profile.avatar} alt="" className="h-10 w-10 rounded-full object-cover" />
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
                       ) : (
                         <div className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white" style={{ backgroundColor: color }}>
                           {name.slice(0, 1).toUpperCase()}

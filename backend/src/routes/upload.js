@@ -1,10 +1,15 @@
 // backend/src/routes/upload.js
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
+
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'upload'));
+const uploadRateLimit = rateLimit(createRateLimitOptions('upload', 'upload'));
 
 // Upload klasörünü oluştur
 // Electron paketi kaynak dizinine yazılamaz. APP_DATA_DIR paketli sürümde
@@ -47,10 +52,10 @@ const upload = multer({
 });
 
 // Yüklemeler yalnızca giriş yapmış kullanıcılar tarafından yapılabilir.
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth);
 
 // Upload single file
-router.post('/file', upload.single('file'), (req, res) => {
+router.post('/file', uploadRateLimit, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -66,7 +71,7 @@ router.post('/file', upload.single('file'), (req, res) => {
 });
 
 // Upload avatar
-router.post('/avatar', upload.single('avatar'), (req, res) => {
+router.post('/avatar', uploadRateLimit, upload.single('avatar'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No avatar uploaded' });
   }

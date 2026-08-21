@@ -4,10 +4,12 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { createGroupDM, fetchFriends, fetchUsers } from '../../services/api';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 
 function UserAvatar({ member }) {
-  if (member.avatar && !member.avatar.includes('ui-avatars.com')) {
-    return <img src={member.avatar} alt="" className="h-9 w-9 rounded-full object-cover" />;
+  const avatarUrl = resolveSafeAvatarUrl(member.avatar);
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" />;
   }
   return (
     <div

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useDirectCall } from '../../context/DirectCallContext';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 
 function RemoteCallAudio({ stream }) {
   const ref = useRef(null);
@@ -19,22 +20,6 @@ function RemoteCallAudio({ stream }) {
     if (stream) ref.current.play().catch(() => {});
   }, [stream]);
   return <audio ref={ref} autoPlay playsInline />;
-}
-
-function resolveCallAvatarUrl(value) {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const clean = value.trim();
-  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(clean)) return clean;
-
-  try {
-    const parsed = new URL(clean);
-    const hostname = parsed.hostname.toLowerCase();
-    const isGeneratedAvatarHost = hostname === 'ui-avatars.com' || hostname.endsWith('.ui-avatars.com');
-    if (isGeneratedAvatarHost || !['http:', 'https:'].includes(parsed.protocol)) return null;
-    return parsed.href;
-  } catch {
-    return null;
-  }
 }
 
 export default function DirectCallOverlay() {
@@ -64,7 +49,7 @@ export default function DirectCallOverlay() {
   const name = otherUser.username || 'Bilinmeyen kullanıcı';
   const initial = name[0]?.toUpperCase() || '?';
   const avatarColor = getColorForString(name);
-  const avatarUrl = resolveCallAvatarUrl(otherUser.avatar);
+  const avatarUrl = resolveSafeAvatarUrl(otherUser.avatar);
   const ringing = call.status === 'ringing';
   const incoming = call.direction === 'incoming';
   const active = call.status === 'active';

@@ -25,6 +25,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { useVoice } from '../../context/VoiceContext';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl, resolveSafeMediaUrl } from '../../utils/safeMediaUrl';
 import {
   DEFAULT_ACCESSIBILITY_PREFERENCES,
   readAccessibilityPreferences,
@@ -154,7 +155,7 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
 
   const validInitialTab = ALL_SETTINGS.some(item => item.id === initialTab) ? initialTab : 'account';
   const [activeTab, setActiveTab] = useState(validInitialTab);
-  const initialAvatar = user.avatar && !user.avatar.includes('ui-avatars') ? user.avatar : '';
+  const initialAvatar = resolveSafeAvatarUrl(user.avatar) || '';
   const [username, setUsername] = useState(user.username || '');
   const [avatarUrl, setAvatarUrl] = useState(initialAvatar);
   const [banner, setBanner] = useState(user.banner || '');
@@ -185,6 +186,8 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
 
   const avatarColor = getColorForString(username || user.username || 'U');
   const initial = (username || user.username || '?').slice(0, 1).toUpperCase();
+  const safeAvatarUrl = resolveSafeAvatarUrl(avatarUrl);
+  const safeBannerUrl = resolveSafeMediaUrl(banner);
   const isVerifyingEmail = Boolean(emailChangeTicket);
   const activeDefinition = ALL_SETTINGS.find(item => item.id === activeTab) || ALL_SETTINGS[0];
 
@@ -368,9 +371,12 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const renderAccount = () => (
     <div className="space-y-5">
       <section className="relative mt-12 overflow-visible rounded-xl border border-white/[0.07] bg-[#2B2D31]">
-        <div className="h-24 rounded-t-xl bg-gradient-to-r from-[#5865F2] via-[#7c5ce7] to-[#9256EA]" style={banner ? { backgroundImage: 'linear-gradient(rgba(20,20,30,.25), rgba(20,20,30,.25)), url(' + banner + ')', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined} />
-        <div className="absolute left-6 top-10 flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-full border-[6px] border-[#2B2D31] text-4xl font-bold text-white shadow-lg" style={{ backgroundColor: avatarUrl ? 'transparent' : avatarColor }}>
-          {avatarUrl ? <img src={avatarUrl} alt="Profil resmi" className="h-full w-full object-cover" /> : initial}
+        <div className="relative h-24 overflow-hidden rounded-t-xl bg-gradient-to-r from-[#5865F2] via-[#7c5ce7] to-[#9256EA]">
+          {safeBannerUrl && <img src={safeBannerUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+          {safeBannerUrl && <div className="absolute inset-0 bg-black/25" />}
+        </div>
+        <div className="absolute left-6 top-10 flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-full border-[6px] border-[#2B2D31] text-4xl font-bold text-white shadow-lg" style={{ backgroundColor: safeAvatarUrl ? 'transparent' : avatarColor }}>
+          {safeAvatarUrl ? <img src={safeAvatarUrl} alt="Profil resmi" className="h-full w-full object-cover" /> : initial}
         </div>
         <div className="flex flex-col gap-4 px-6 pb-6 pt-16 sm:flex-row sm:items-end sm:justify-between">
           <div><h3 className="text-2xl font-bold text-[#F2F3F5]">{username || user.username}</h3><p className="mt-1 text-sm text-[#949BA4]">{user.email}</p></div>

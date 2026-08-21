@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { Mic, Headphones, PhoneOff, Settings, LogOut, User } from 'lucide-react';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import UserSettingsModal from './UserSettingsModal'; // YENİ MODALI İÇE AKTARDIK
 import { useVoice } from '../../context/VoiceContext';
 
@@ -44,6 +45,7 @@ export default function UserProfile() {
 
   const avatarColor = getColorForString(user.username || 'U');
   const initial = user.username ? user.username[0].toUpperCase() : '?';
+  const avatarUrl = resolveSafeAvatarUrl(user.avatar);
   const presence = user.presenceStatus || user.status || (isPresenceReady ? 'online' : 'offline');
   const presenceLabels = { online: 'Çevrimiçi', idle: 'Boşta', dnd: 'Rahatsız etmeyin', invisible: 'Görünmez', offline: 'Çevrimdışı' };
   const presenceColor = presence === 'online' ? 'bg-[#34d399]' : presence === 'idle' ? 'bg-[#f59e0b]' : presence === 'dnd' ? 'bg-[#ef4444]' : 'bg-[#64748b]';
@@ -74,8 +76,8 @@ export default function UserProfile() {
               className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[14px] font-semibold overflow-hidden"
               style={{ backgroundColor: avatarColor }}
             >
-              {user.avatar && !user.avatar.includes('ui-avatars.com') ? (
-                <img src={user.avatar} alt="avatar" className="w-full h-full object-cover" />
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="avatar" className="w-full h-full object-cover" />
               ) : (
                 initial
               )}
@@ -129,8 +131,8 @@ export default function UserProfile() {
             <div className="p-4 border-b border-[#1E1F22] bg-[#2B2D31]">
               <div className="flex items-center space-x-3 mb-2">
                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg overflow-hidden" style={{ backgroundColor: avatarColor }}>
-                   {user.avatar && !user.avatar.includes('ui-avatars.com') ? (
-                     <img src={user.avatar} alt="avatar" className="w-full h-full object-cover" />
+                   {avatarUrl ? (
+                     <img src={avatarUrl} alt="avatar" className="w-full h-full object-cover" />
                    ) : (
                      initial
                    )}

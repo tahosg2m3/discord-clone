@@ -1,13 +1,18 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { platformService } = require('../services/platformService');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 const { emitAudit } = require('../sockets/authorizedEmit');
 const { requireServerMember, requireServerOwner } = require('../middleware/authorization');
 const { disconnectUserFromServerVoice } = require('../sockets/handlers/voiceHandler');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'roles'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'roles'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'roles'));
 
 const MODERATION_ACTIONS = {
   kick: { permission: 'KICK_MEMBERS' },
@@ -46,9 +51,7 @@ function writeAudit(req, serverId, action, targetType, targetId, metadata = {}) 
   emitAudit(req.app.get('io'), serverId, entry);
 }
 
-router.use(requireAuth);
-
-router.get('/:serverId/roles', requireServerMember, (req, res) => {
+router.get('/:serverId/roles', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => {
   const serverId = req.params.serverId;
   return res.json({
     roles: storage.getServerRoles(serverId),
@@ -58,7 +61,7 @@ router.get('/:serverId/roles', requireServerMember, (req, res) => {
   });
 });
 
-router.post('/:serverId/roles', requireServerOwner, (req, res) => {
+router.post('/:serverId/roles', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const name = String(req.body.name || '').trim();
   if (!name || name.length > 100) return res.status(400).json({ error: 'Rol adı 1-100 karakter olmalıdır.' });
 
@@ -77,21 +80,21 @@ router.post('/:serverId/roles', requireServerOwner, (req, res) => {
   return res.status(201).json({ role });
 });
 
-router.patch('/:serverId/roles/reorder', requireServerOwner, (req, res) => {
+router.patch('/:serverId/roles/reorder', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const roles = storage.reorderServerRoles(req.params.serverId, req.body.roleIds);
   if (!roles) return res.status(400).json({ error: 'Rol sırası geçersiz.' });
   emitRolesChanged(req, req.params.serverId);
   return res.json({ roles });
 });
 
-router.put('/:serverId/roles/reorder', requireServerOwner, (req, res) => {
+router.put('/:serverId/roles/reorder', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const roles = storage.reorderServerRoles(req.params.serverId, req.body.roleIds);
   if (!roles) return res.status(400).json({ error: 'Rol sırası geçersiz.' });
   emitRolesChanged(req, req.params.serverId);
   return res.json({ roles });
 });
 
-router.patch('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
+router.patch('/:serverId/roles/:roleId', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   const serverId = req.params.serverId;
   const role = storage.getServerRole(serverId, req.params.roleId);
   if (!role) return res.status(404).json({ error: 'Rol bulunamadı.' });
@@ -132,7 +135,7 @@ router.patch('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
   return res.json({ role: updated });
 });
 
-router.delete('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
+router.delete('/:serverId/roles/:roleId', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   if (!storage.deleteServerRole(req.params.serverId, req.params.roleId)) {
     return res.status(400).json({ error: '@everyone rolü silinemez veya rol bulunamadı.' });
   }
@@ -142,7 +145,7 @@ router.delete('/:serverId/roles/:roleId', requireServerOwner, (req, res) => {
   return res.json({ success: true });
 });
 
-router.get('/:serverId/members/:userId/permissions', requireServerMember, (req, res) => {
+router.get('/:serverId/members/:userId/permissions', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => {
   const member = storage.getServerMemberDetails(req.params.serverId, req.params.userId);
   if (!member) return res.status(404).json({ error: 'Üye bulunamadı.' });
   return res.json({
@@ -153,7 +156,7 @@ router.get('/:serverId/members/:userId/permissions', requireServerMember, (req, 
   });
 });
 
-router.patch('/:serverId/members/:userId/roles', requireServerOwner, (req, res) => {
+router.patch('/:serverId/members/:userId/roles', authRateLimit, requireAuth, mutationRateLimit, requireServerOwner, (req, res) => {
   if (!storage.isServerMember(req.params.serverId, req.params.userId)) {
     return res.status(404).json({ error: 'Üye bulunamadı.' });
   }
@@ -166,7 +169,7 @@ router.patch('/:serverId/members/:userId/roles', requireServerOwner, (req, res) 
   return res.json({ member });
 });
 
-router.post('/:serverId/members/:userId/moderate', requireServerMember, (req, res) => {
+router.post('/:serverId/members/:userId/moderate', authRateLimit, requireAuth, mutationRateLimit, requireServerMember, (req, res) => {
   const serverId = req.params.serverId;
   const targetUserId = req.params.userId;
   const action = String(req.body.action || '').toLowerCase();

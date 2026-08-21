@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { fetchDMConversations } from '../../services/api';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import CreateGroupDMModal from './CreateGroupDMModal';
 import GroupDMAvatar from './GroupDMAvatar';
 
@@ -147,12 +148,13 @@ export default function DMList({ setViewMode }) {
               const label = group ? (dm.name || 'Yeni Grup') : directUser.username;
               const status = directUser?.presenceStatus || directUser?.status;
               const online = status && !['offline', 'invisible'].includes(status);
+              const avatarUrl = group ? null : resolveSafeAvatarUrl(directUser.avatar);
 
               return (
                 <button key={dm.id} type="button" onClick={() => handleSelectDM(dm)} className={`group flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors ${isActive ? 'bg-white/[0.1] text-white' : 'text-[#94a3b8] hover:bg-white/[0.06] hover:text-[#DBDEE1]'}`}>
                   <div className="relative shrink-0">
-                    {group ? <GroupDMAvatar conversation={dm} size={34} /> : directUser.avatar && !directUser.avatar.includes('ui-avatars.com') ? (
-                      <img src={directUser.avatar} className="h-[34px] w-[34px] rounded-full object-cover" alt="" />
+                    {group ? <GroupDMAvatar conversation={dm} size={34} /> : avatarUrl ? (
+                      <img src={avatarUrl} className="h-[34px] w-[34px] rounded-full object-cover" alt="" />
                     ) : (
                       <div className="flex h-[34px] w-[34px] items-center justify-center rounded-full text-[14px] font-semibold text-white" style={{ backgroundColor: getColorForString(directUser.username) }}>{directUser.username[0].toUpperCase()}</div>
                     )}

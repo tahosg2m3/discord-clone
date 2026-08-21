@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const { rateLimit } = require('express-rate-limit');
 const { v4: uuidv4 } = require('uuid');
 
 const storage = require('../storage/inMemory');
@@ -69,98 +70,186 @@ function requestRemoteAddress(req) {
   return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
 }
 
-function authRateLimit({ scope, windowMs, ipLimit, accountLimit, accountKey }) {
-  return (req, res, next) => {
+class BoundedAuthRateLimitStore {
+  constructor({ windowMs, limit }) {
+    this.windowMs = windowMs;
+    this.limit = limit;
+  }
+
+  init(options) {
+    this.windowMs = options.windowMs;
+  }
+
+  increment(key) {
     const now = Date.now();
-    const subjects = [
-      { key: rateLimitKey(scope, 'ip', requestRemoteAddress(req)), limit: ipLimit },
-    ];
-    if (typeof accountKey === 'function') {
-      subjects.push({ key: rateLimitKey(scope, 'account', accountKey(req)), limit: accountLimit });
+    let entry = authRateLimitEntries.get(key);
+
+    if (entry && now >= entry.expiresAt) {
+      authRateLimitEntries.delete(key);
+      entry = null;
     }
 
-    const uniqueSubjects = [...new Map(subjects.map(subject => [subject.key, subject])).values()];
-    const states = uniqueSubjects.map(subject => {
-      let entry = authRateLimitEntries.get(subject.key);
-      if (entry && now >= entry.expiresAt) {
-        authRateLimitEntries.delete(subject.key);
-        entry = null;
-      }
-      return { ...subject, entry };
-    });
-    const blocked = states.find(state => state.entry && state.entry.count >= state.limit);
-
-    if (blocked) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((blocked.entry.expiresAt - now) / 1000));
-      res.set('Retry-After', String(retryAfterSeconds));
-      return res.status(429).json({
-        error: 'Çok fazla deneme yaptın. Lütfen biraz bekleyip yeniden dene.',
-      });
-    }
-
-    const newEntryCount = states.filter(state => !state.entry).length;
-    if (authRateLimitEntries.size + newEntryCount > MAX_RATE_LIMIT_ENTRIES) {
+    if (!entry && authRateLimitEntries.size >= MAX_RATE_LIMIT_ENTRIES) {
       cleanupExpiredSecurityState(now);
-      if (authRateLimitEntries.size + newEntryCount > MAX_RATE_LIMIT_ENTRIES) {
-        res.set('Retry-After', '60');
-        return res.status(429).json({
-          error: 'Çok fazla deneme yaptın. Lütfen biraz bekleyip yeniden dene.',
-        });
+      entry = authRateLimitEntries.get(key);
+      if (!entry && authRateLimitEntries.size >= MAX_RATE_LIMIT_ENTRIES) {
+        return {
+          totalHits: this.limit + 1,
+          resetTime: new Date(now + 60 * 1000),
+        };
       }
     }
 
-    states.forEach(state => {
-      if (state.entry) {
-        state.entry.count += 1;
-      } else {
-        authRateLimitEntries.set(state.key, { count: 1, expiresAt: now + windowMs });
-      }
-    });
-    return next();
+    if (entry) {
+      entry.count += 1;
+    } else {
+      entry = { count: 1, expiresAt: now + this.windowMs };
+      authRateLimitEntries.set(key, entry);
+    }
+
+    return { totalHits: entry.count, resetTime: new Date(entry.expiresAt) };
+  }
+
+  decrement(key) {
+    const entry = authRateLimitEntries.get(key);
+    if (!entry) return;
+    entry.count = Math.max(0, entry.count - 1);
+    if (entry.count === 0) authRateLimitEntries.delete(key);
+  }
+
+  resetKey(key) {
+    authRateLimitEntries.delete(key);
+  }
+}
+
+function rejectRateLimitedRequest(req, res) {
+  const resetAt = req.rateLimit?.resetTime instanceof Date
+    ? req.rateLimit.resetTime.getTime()
+    : Date.now() + 60 * 1000;
+  const retryAfterSeconds = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+  res.set('Retry-After', String(retryAfterSeconds));
+  return res.status(429).json({
+    error: 'Çok fazla deneme yaptın. Lütfen biraz bekleyip yeniden dene.',
+  });
+}
+
+function authRateLimitOptions({ scope, kind, windowMs, limit, subject }) {
+  return {
+    windowMs,
+    limit,
+    legacyHeaders: false,
+    standardHeaders: false,
+    keyGenerator: req => rateLimitKey(scope, kind, subject(req)),
+    store: new BoundedAuthRateLimitStore({ windowMs, limit }),
+    handler: rejectRateLimitedRequest,
   };
 }
 
 const rateLimits = Object.freeze({
-  register: authRateLimit({
-    scope: 'register', windowMs: 60 * 60 * 1000, ipLimit: 12, accountLimit: 5,
-    accountKey: req => normalizeEmail(req.body?.email),
-  }),
-  login: authRateLimit({
-    scope: 'login', windowMs: 15 * 60 * 1000, ipLimit: 30, accountLimit: 10,
-    accountKey: req => normalizeEmail(req.body?.email),
-  }),
-  verifyTwoFactor: authRateLimit({
-    scope: 'verify-2fa', windowMs: 15 * 60 * 1000, ipLimit: 40, accountLimit: 8,
-    accountKey: req => req.body?.loginTicket,
-  }),
-  resendTwoFactor: authRateLimit({
-    scope: 'resend-2fa', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
-    accountKey: req => req.body?.loginTicket,
-  }),
-  requestPasswordReset: authRateLimit({
-    scope: 'request-password-reset', windowMs: 60 * 60 * 1000, ipLimit: 12, accountLimit: 5,
-    accountKey: req => normalizeEmail(req.body?.email),
-  }),
-  resendPasswordReset: authRateLimit({
-    scope: 'resend-password-reset', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
-    accountKey: req => req.body?.resetTicket,
-  }),
-  resetPassword: authRateLimit({
-    scope: 'reset-password', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 8,
-    accountKey: req => req.body?.resetTicket,
-  }),
-  requestEmailChange: authRateLimit({
-    scope: 'request-email-change', windowMs: 60 * 60 * 1000, ipLimit: 20, accountLimit: 6,
-    accountKey: req => req.user?.id,
-  }),
-  resendEmailChange: authRateLimit({
-    scope: 'resend-email-change', windowMs: 15 * 60 * 1000, ipLimit: 20, accountLimit: 5,
-    accountKey: req => req.body?.emailChangeTicket,
-  }),
-  confirmEmailChange: authRateLimit({
-    scope: 'confirm-email-change', windowMs: 15 * 60 * 1000, ipLimit: 30, accountLimit: 8,
-    accountKey: req => req.body?.emailChangeTicket,
-  }),
+  registerIp: rateLimit(authRateLimitOptions({
+    scope: 'register', kind: 'ip', windowMs: 60 * 60 * 1000, limit: 12,
+    subject: requestRemoteAddress,
+  })),
+  registerAccount: rateLimit(authRateLimitOptions({
+    scope: 'register', kind: 'account', windowMs: 60 * 60 * 1000, limit: 5,
+    subject: req => normalizeEmail(req.body?.email),
+  })),
+  loginIp: rateLimit(authRateLimitOptions({
+    scope: 'login', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 30,
+    subject: requestRemoteAddress,
+  })),
+  loginAccount: rateLimit(authRateLimitOptions({
+    scope: 'login', kind: 'account', windowMs: 15 * 60 * 1000, limit: 10,
+    subject: req => normalizeEmail(req.body?.email),
+  })),
+  verifyTwoFactorIp: rateLimit(authRateLimitOptions({
+    scope: 'verify-2fa', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 40,
+    subject: requestRemoteAddress,
+  })),
+  verifyTwoFactorAccount: rateLimit(authRateLimitOptions({
+    scope: 'verify-2fa', kind: 'account', windowMs: 15 * 60 * 1000, limit: 8,
+    subject: req => req.body?.loginTicket,
+  })),
+  resendTwoFactorIp: rateLimit(authRateLimitOptions({
+    scope: 'resend-2fa', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 20,
+    subject: requestRemoteAddress,
+  })),
+  resendTwoFactorAccount: rateLimit(authRateLimitOptions({
+    scope: 'resend-2fa', kind: 'account', windowMs: 15 * 60 * 1000, limit: 5,
+    subject: req => req.body?.loginTicket,
+  })),
+  requestPasswordResetIp: rateLimit(authRateLimitOptions({
+    scope: 'request-password-reset', kind: 'ip', windowMs: 60 * 60 * 1000, limit: 12,
+    subject: requestRemoteAddress,
+  })),
+  requestPasswordResetAccount: rateLimit(authRateLimitOptions({
+    scope: 'request-password-reset', kind: 'account', windowMs: 60 * 60 * 1000, limit: 5,
+    subject: req => normalizeEmail(req.body?.email),
+  })),
+  resendPasswordResetIp: rateLimit(authRateLimitOptions({
+    scope: 'resend-password-reset', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 20,
+    subject: requestRemoteAddress,
+  })),
+  resendPasswordResetAccount: rateLimit(authRateLimitOptions({
+    scope: 'resend-password-reset', kind: 'account', windowMs: 15 * 60 * 1000, limit: 5,
+    subject: req => req.body?.resetTicket,
+  })),
+  resetPasswordIp: rateLimit(authRateLimitOptions({
+    scope: 'reset-password', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 20,
+    subject: requestRemoteAddress,
+  })),
+  resetPasswordAccount: rateLimit(authRateLimitOptions({
+    scope: 'reset-password', kind: 'account', windowMs: 15 * 60 * 1000, limit: 8,
+    subject: req => req.body?.resetTicket,
+  })),
+  requestEmailChangeIp: rateLimit(authRateLimitOptions({
+    scope: 'request-email-change', kind: 'ip', windowMs: 60 * 60 * 1000, limit: 20,
+    subject: requestRemoteAddress,
+  })),
+  requestEmailChangeAccount: rateLimit(authRateLimitOptions({
+    scope: 'request-email-change', kind: 'account', windowMs: 60 * 60 * 1000, limit: 6,
+    subject: req => req.user?.id,
+  })),
+  resendEmailChangeIp: rateLimit(authRateLimitOptions({
+    scope: 'resend-email-change', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 20,
+    subject: requestRemoteAddress,
+  })),
+  resendEmailChangeAccount: rateLimit(authRateLimitOptions({
+    scope: 'resend-email-change', kind: 'account', windowMs: 15 * 60 * 1000, limit: 5,
+    subject: req => req.body?.emailChangeTicket,
+  })),
+  confirmEmailChangeIp: rateLimit(authRateLimitOptions({
+    scope: 'confirm-email-change', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 30,
+    subject: requestRemoteAddress,
+  })),
+  confirmEmailChangeAccount: rateLimit(authRateLimitOptions({
+    scope: 'confirm-email-change', kind: 'account', windowMs: 15 * 60 * 1000, limit: 8,
+    subject: req => req.body?.emailChangeTicket,
+  })),
+  verifySessionIp: rateLimit(authRateLimitOptions({
+    scope: 'verify-session', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 300,
+    subject: requestRemoteAddress,
+  })),
+  verifySessionAccount: rateLimit(authRateLimitOptions({
+    scope: 'verify-session', kind: 'account', windowMs: 15 * 60 * 1000, limit: 180,
+    subject: req => req.user?.id,
+  })),
+  readProfileIp: rateLimit(authRateLimitOptions({
+    scope: 'read-profile', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 600,
+    subject: requestRemoteAddress,
+  })),
+  readProfileAccount: rateLimit(authRateLimitOptions({
+    scope: 'read-profile', kind: 'account', windowMs: 15 * 60 * 1000, limit: 300,
+    subject: req => req.user?.id,
+  })),
+  updateProfileIp: rateLimit(authRateLimitOptions({
+    scope: 'update-profile', kind: 'ip', windowMs: 15 * 60 * 1000, limit: 60,
+    subject: requestRemoteAddress,
+  })),
+  updateProfileAccount: rateLimit(authRateLimitOptions({
+    scope: 'update-profile', kind: 'account', windowMs: 15 * 60 * 1000, limit: 30,
+    subject: req => req.user?.id,
+  })),
 });
 
 function publicUser(user) {
@@ -199,7 +288,15 @@ function isValidPassword(value) {
 }
 
 function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (typeof value !== 'string' || value.length < 5 || value.length > 254 || /\s/u.test(value)) {
+    return false;
+  }
+
+  const atIndex = value.indexOf('@');
+  if (atIndex <= 0 || atIndex !== value.lastIndexOf('@')) return false;
+
+  const finalDotIndex = value.lastIndexOf('.');
+  return finalDotIndex > atIndex + 1 && finalDotIndex < value.length - 1;
 }
 
 function emailDeliveryErrorMessage(error, fallback) {
@@ -385,7 +482,7 @@ async function resendPendingCode(map, ticket, sendCode, resolveRecipient = pendi
   return { pending };
 }
 
-router.post('/register', rateLimits.register, async (req, res) => {
+router.post('/register', rateLimits.registerIp, rateLimits.registerAccount, async (req, res) => {
   try {
     const username = String(req.body.username || '').trim();
     const email = normalizeEmail(req.body.email);
@@ -422,7 +519,7 @@ router.post('/register', rateLimits.register, async (req, res) => {
   }
 });
 
-router.post('/login', rateLimits.login, async (req, res) => {
+router.post('/login', rateLimits.loginIp, rateLimits.loginAccount, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
@@ -448,7 +545,7 @@ router.post('/login', rateLimits.login, async (req, res) => {
   }
 });
 
-router.post('/verify-2fa', rateLimits.verifyTwoFactor, (req, res) => {
+router.post('/verify-2fa', rateLimits.verifyTwoFactorIp, rateLimits.verifyTwoFactorAccount, (req, res) => {
   const loginTicket = String(req.body.loginTicket || '');
   const code = String(req.body.code || '').trim();
   const result = validatePendingCode(pendingTwoFactorLogins, loginTicket, code);
@@ -479,7 +576,7 @@ router.post('/verify-2fa', rateLimits.verifyTwoFactor, (req, res) => {
   return res.json({ user: publicUser(user), token: signAuthToken(user) });
 });
 
-router.post('/resend-2fa', rateLimits.resendTwoFactor, async (req, res) => {
+router.post('/resend-2fa', rateLimits.resendTwoFactorIp, rateLimits.resendTwoFactorAccount, async (req, res) => {
   try {
     const loginTicket = String(req.body.loginTicket || '');
     const result = await resendPendingCode(
@@ -497,57 +594,67 @@ router.post('/resend-2fa', rateLimits.resendTwoFactor, async (req, res) => {
 });
 
 // E-posta adresinin varlığı hakkında bilgi sızdırmamak için her zaman aynı mesaj döner.
-router.post('/request-password-reset', rateLimits.requestPasswordReset, async (req, res) => {
-  const email = normalizeEmail(req.body.email);
-  const user = findUserByEmail(email);
-  let resetTicket = null;
+router.post(
+  '/request-password-reset',
+  rateLimits.requestPasswordResetIp,
+  rateLimits.requestPasswordResetAccount,
+  async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    const user = findUserByEmail(email);
+    let resetTicket = null;
 
-  try {
-    if (user) {
-      const created = createPendingCode(pendingPasswordResets, user.id);
-      resetTicket = created.ticket;
-      await sendPasswordResetCode(user.email, user.username, created.code);
-    } else {
-      resetTicket = createDecoyPasswordReset();
+    try {
+      if (user) {
+        const created = createPendingCode(pendingPasswordResets, user.id);
+        resetTicket = created.ticket;
+        await sendPasswordResetCode(user.email, user.username, created.code);
+      } else {
+        resetTicket = createDecoyPasswordReset();
+      }
+    } catch (error) {
+      // SMTP hatası da hesap yokmuş gibi aynı şekil ve sonraki davranışla yanıtlanır.
+      // Böylece yanıt gövdesi üzerinden hesap veya teslimat durumu anlaşılmaz.
+      if (resetTicket) {
+        pendingPasswordResets.delete(resetTicket);
+        createDecoyPasswordReset(resetTicket);
+      } else {
+        resetTicket = createDecoyPasswordReset();
+      }
+      console.error('Şifre sıfırlama e-postası gönderilemedi:', error.message);
     }
-  } catch (error) {
-    // SMTP hatası da hesap yokmuş gibi aynı şekil ve sonraki davranışla yanıtlanır.
-    // Böylece yanıt gövdesi üzerinden hesap veya teslimat durumu anlaşılmaz.
-    if (resetTicket) {
-      pendingPasswordResets.delete(resetTicket);
-      createDecoyPasswordReset(resetTicket);
-    } else {
-      resetTicket = createDecoyPasswordReset();
-    }
-    console.error('Şifre sıfırlama e-postası gönderilemedi:', error.message);
-  }
 
-  return res.json({
-    message: 'Bu e-posta hesabı kayıtlıysa şifre sıfırlama kodu gönderildi.',
-    resetTicket,
-  });
-});
-
-router.post('/resend-password-reset', rateLimits.resendPasswordReset, async (req, res) => {
-  try {
-    const resetTicket = String(req.body.resetTicket || '');
-    const result = await resendPendingCode(
-      pendingPasswordResets,
+    return res.json({
+      message: 'Bu e-posta hesabı kayıtlıysa şifre sıfırlama kodu gönderildi.',
       resetTicket,
-      (user, code, pending) => (pending.decoy
-        ? Promise.resolve()
-        : sendPasswordResetCode(user.email, user.username, code)),
-      pending => (pending.decoy ? { decoy: true } : storage.getUserById(pending.userId)),
-    );
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    return res.json({ message: 'Yeni şifre sıfırlama kodu e-posta adresine gönderildi.' });
-  } catch (error) {
-    console.error('Şifre sıfırlama kodu tekrar gönderilemedi:', error.message);
-    return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Yeni kod gönderilemedi.') });
-  }
-});
+    });
+  },
+);
 
-router.post('/reset-password', rateLimits.resetPassword, async (req, res) => {
+router.post(
+  '/resend-password-reset',
+  rateLimits.resendPasswordResetIp,
+  rateLimits.resendPasswordResetAccount,
+  async (req, res) => {
+    try {
+      const resetTicket = String(req.body.resetTicket || '');
+      const result = await resendPendingCode(
+        pendingPasswordResets,
+        resetTicket,
+        (user, code, pending) => (pending.decoy
+          ? Promise.resolve()
+          : sendPasswordResetCode(user.email, user.username, code)),
+        pending => (pending.decoy ? { decoy: true } : storage.getUserById(pending.userId)),
+      );
+      if (result.error) return res.status(result.status).json({ error: result.error });
+      return res.json({ message: 'Yeni şifre sıfırlama kodu e-posta adresine gönderildi.' });
+    } catch (error) {
+      console.error('Şifre sıfırlama kodu tekrar gönderilemedi:', error.message);
+      return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Yeni kod gönderilemedi.') });
+    }
+  },
+);
+
+router.post('/reset-password', rateLimits.resetPasswordIp, rateLimits.resetPasswordAccount, async (req, res) => {
   try {
     const resetTicket = String(req.body.resetTicket || '');
     const code = String(req.body.code || '').trim();
@@ -581,89 +688,113 @@ router.post('/reset-password', rateLimits.resetPassword, async (req, res) => {
   }
 });
 
-router.post('/request-email-change', requireAuth, rateLimits.requestEmailChange, async (req, res) => {
-  try {
-    const newEmail = normalizeEmail(req.body.newEmail);
-    const currentPassword = String(req.body.currentPassword || '');
-
-    if (!isValidEmail(newEmail)) return res.status(400).json({ error: 'Geçerli bir e-posta adresi gir.' });
-    if (newEmail === normalizeEmail(req.user.email)) return res.status(400).json({ error: 'Bu e-posta adresi zaten kullanımda.' });
-    if (storage.getUserByEmail(newEmail)) return res.status(409).json({ error: 'Bu e-posta adresi başka bir hesapta kullanılıyor.' });
-    if (!(await checkPasswordAndMigrate(req.user, currentPassword))) {
-      return res.status(401).json({ error: 'Mevcut şifren hatalı.' });
-    }
-
-    const created = createPendingCode(pendingEmailChanges, req.user.id, { newEmail });
+router.post(
+  '/request-email-change',
+  rateLimits.requestEmailChangeIp,
+  requireAuth,
+  rateLimits.requestEmailChangeAccount,
+  async (req, res) => {
     try {
-      await sendEmailChangeCode(newEmail, req.user.username, created.code);
+      const newEmail = normalizeEmail(req.body.newEmail);
+      const currentPassword = String(req.body.currentPassword || '');
+
+      if (!isValidEmail(newEmail)) return res.status(400).json({ error: 'Geçerli bir e-posta adresi gir.' });
+      if (newEmail === normalizeEmail(req.user.email)) return res.status(400).json({ error: 'Bu e-posta adresi zaten kullanımda.' });
+      if (storage.getUserByEmail(newEmail)) return res.status(409).json({ error: 'Bu e-posta adresi başka bir hesapta kullanılıyor.' });
+      if (!(await checkPasswordAndMigrate(req.user, currentPassword))) {
+        return res.status(401).json({ error: 'Mevcut şifren hatalı.' });
+      }
+
+      const created = createPendingCode(pendingEmailChanges, req.user.id, { newEmail });
+      try {
+        await sendEmailChangeCode(newEmail, req.user.username, created.code);
+      } catch (error) {
+        pendingEmailChanges.delete(created.ticket);
+        throw error;
+      }
+
+      return res.json({
+        emailChangeTicket: created.ticket,
+        message: 'Doğrulama kodu yeni e-posta adresine gönderildi.',
+      });
     } catch (error) {
-      pendingEmailChanges.delete(created.ticket);
-      throw error;
+      const busyResponse = passwordWorkBusyResponse(error, res);
+      if (busyResponse) return busyResponse;
+      console.error('E-posta değişikliği doğrulaması gönderilemedi:', error.message);
+      return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Doğrulama e-postası gönderilemedi.') });
     }
+  },
+);
 
-    return res.json({
-      emailChangeTicket: created.ticket,
-      message: 'Doğrulama kodu yeni e-posta adresine gönderildi.',
-    });
-  } catch (error) {
-    const busyResponse = passwordWorkBusyResponse(error, res);
-    if (busyResponse) return busyResponse;
-    console.error('E-posta değişikliği doğrulaması gönderilemedi:', error.message);
-    return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Doğrulama e-postası gönderilemedi.') });
-  }
-});
+router.post(
+  '/resend-email-change',
+  rateLimits.resendEmailChangeIp,
+  requireAuth,
+  rateLimits.resendEmailChangeAccount,
+  async (req, res) => {
+    try {
+      const emailChangeTicket = String(req.body.emailChangeTicket || '');
+      const pending = pendingEmailChanges.get(emailChangeTicket);
+      if (!pending || pending.userId !== req.user.id) {
+        return res.status(400).json({ error: 'Doğrulama oturumu bulunamadı. İşlemi yeniden başlat.' });
+      }
 
-router.post('/resend-email-change', requireAuth, rateLimits.resendEmailChange, async (req, res) => {
-  try {
+      const result = await resendPendingCode(pendingEmailChanges, emailChangeTicket, (user, code, current) => (
+        sendEmailChangeCode(current.newEmail, user.username, code)
+      ));
+      if (result.error) return res.status(result.status).json({ error: result.error });
+      return res.json({ message: 'Yeni doğrulama kodu yeni e-posta adresine gönderildi.' });
+    } catch (error) {
+      console.error('E-posta değişikliği kodu tekrar gönderilemedi:', error.message);
+      return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Yeni kod gönderilemedi.') });
+    }
+  },
+);
+
+router.post(
+  '/confirm-email-change',
+  rateLimits.confirmEmailChangeIp,
+  requireAuth,
+  rateLimits.confirmEmailChangeAccount,
+  (req, res) => {
     const emailChangeTicket = String(req.body.emailChangeTicket || '');
+    const code = String(req.body.code || '').trim();
     const pending = pendingEmailChanges.get(emailChangeTicket);
+
     if (!pending || pending.userId !== req.user.id) {
       return res.status(400).json({ error: 'Doğrulama oturumu bulunamadı. İşlemi yeniden başlat.' });
     }
 
-    const result = await resendPendingCode(pendingEmailChanges, emailChangeTicket, (user, code, current) => (
-      sendEmailChangeCode(current.newEmail, user.username, code)
-    ));
+    const result = validatePendingCode(pendingEmailChanges, emailChangeTicket, code);
     if (result.error) return res.status(result.status).json({ error: result.error });
-    return res.json({ message: 'Yeni doğrulama kodu yeni e-posta adresine gönderildi.' });
-  } catch (error) {
-    console.error('E-posta değişikliği kodu tekrar gönderilemedi:', error.message);
-    return res.status(503).json({ error: emailDeliveryErrorMessage(error, 'Yeni kod gönderilemedi.') });
-  }
-});
 
-router.post('/confirm-email-change', requireAuth, rateLimits.confirmEmailChange, (req, res) => {
-  const emailChangeTicket = String(req.body.emailChangeTicket || '');
-  const code = String(req.body.code || '').trim();
-  const pending = pendingEmailChanges.get(emailChangeTicket);
+    if (storage.getUserByEmail(result.pending.newEmail)) {
+      pendingEmailChanges.delete(emailChangeTicket);
+      return res.status(409).json({ error: 'Bu e-posta adresi artık başka bir hesapta kullanılıyor.' });
+    }
 
-  if (!pending || pending.userId !== req.user.id) {
-    return res.status(400).json({ error: 'Doğrulama oturumu bulunamadı. İşlemi yeniden başlat.' });
-  }
-
-  const result = validatePendingCode(pendingEmailChanges, emailChangeTicket, code);
-  if (result.error) return res.status(result.status).json({ error: result.error });
-
-  if (storage.getUserByEmail(result.pending.newEmail)) {
+    const user = storage.updateUserEmail(req.user.id, result.pending.newEmail);
     pendingEmailChanges.delete(emailChangeTicket);
-    return res.status(409).json({ error: 'Bu e-posta adresi artık başka bir hesapta kullanılıyor.' });
-  }
+    if (!user) return res.status(400).json({ error: 'E-posta adresi güncellenemedi.' });
+    return res.json({ user: publicUser(user), message: 'E-posta adresin güncellendi.' });
+  },
+);
 
-  const user = storage.updateUserEmail(req.user.id, result.pending.newEmail);
-  pendingEmailChanges.delete(emailChangeTicket);
-  if (!user) return res.status(400).json({ error: 'E-posta adresi güncellenemedi.' });
-  return res.json({ user: publicUser(user), message: 'E-posta adresin güncellendi.' });
-});
+router.get(
+  '/verify',
+  rateLimits.verifySessionIp,
+  requireAuth,
+  rateLimits.verifySessionAccount,
+  (req, res) => res.json({ user: publicUser(req.user) }),
+);
 
-router.get('/verify', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
-
-router.get('/:id', requireAuth, (req, res) => {
+router.get('/:id', rateLimits.readProfileIp, requireAuth, rateLimits.readProfileAccount, (req, res) => {
   const user = storage.getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
   return res.json(req.params.id === req.user.id ? publicUser(user) : publicProfile(user));
 });
 
-router.put('/:id', requireAuth, (req, res) => {
+router.put('/:id', rateLimits.updateProfileIp, requireAuth, rateLimits.updateProfileAccount, (req, res) => {
   if (req.params.id !== req.user.id) return res.status(403).json({ error: 'Başka bir kullanıcının profilini değiştiremezsin.' });
 
   try {

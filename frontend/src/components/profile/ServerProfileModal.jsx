@@ -4,13 +4,16 @@ import { Save, User as UserRound, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { updateServerProfile } from '../../services/platformApi';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 
 export default function ServerProfileModal({ server, member, user, onUpdated, onClose }) {
   const [nickname, setNickname] = useState(member?.nickname || '');
   const [serverAvatar, setServerAvatar] = useState(member?.serverAvatar || '');
   const [saving, setSaving] = useState(false);
   const displayName = nickname.trim() || user?.username || 'Üye';
-  const avatar = serverAvatar.trim() || user?.avatar;
+  const avatar = serverAvatar.trim()
+    ? resolveSafeAvatarUrl(serverAvatar)
+    : resolveSafeAvatarUrl(user?.avatar);
 
   const save = async event => {
     event.preventDefault(); setSaving(true);
