@@ -40,6 +40,32 @@ function emitSocialUpdate(req, userIds) {
   });
 }
 
+function safeActivity(activity, index) {
+  if (!activity || typeof activity !== 'object') return null;
+  const name = String(activity.name || '').trim().slice(0, 80);
+  if (!name) return null;
+  let imageUrl = null;
+  const candidate = String(activity.imageUrl || activity.image || '').trim();
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(candidate)) imageUrl = candidate;
+  else {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') imageUrl = parsed.href;
+    } catch (_) {
+      imageUrl = null;
+    }
+  }
+  return {
+    id: String(activity.id || `activity-${index}`).slice(0, 100),
+    name,
+    details: String(activity.details || '').trim().slice(0, 160),
+    state: String(activity.state || '').trim().slice(0, 160),
+    imageUrl,
+    startedAt: Number(activity.startedAt) || null,
+    type: String(activity.type || 'playing').trim().slice(0, 24),
+  };
+}
+
 router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 // Eski kullanıcı adıyla şifresiz giriş endpoint'i güvenlik nedeniyle kaldırıldı.
@@ -94,6 +120,78 @@ router.patch('/me', async (req, res) => {
       ? 'Bu kullanıcı adı zaten kullanılıyor.'
       : (error.message || 'Profil güncellenemedi.');
     return res.status(400).json({ error: message });
+  }
+});
+
+router.get('/:userId/profile', (req, res) => {
+  const targetUserId = String(req.params.userId || '').trim();
+  const target = storage.getPublicUserById(targetUserId);
+  if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+
+  const requestedServerId = String(req.query.serverId || '').trim();
+  const canSeeServerContext = requestedServerId
+    && storage.isServerMember(requestedServerId, req.user.id)
+    && storage.isServerMember(requestedServerId, targetUserId);
+  const server = canSeeServerContext ? storage.getServerById(requestedServerId) : null;
+  const serverMember = server ? storage.getServerMemberDetails(server.id, targetUserId) : null;
+  const viewerMember = server ? storage.getServerMemberDetails(server.id, req.user.id) : null;
+  const friendship = storage.getFriendship(req.user.id, targetUserId);
+  const pendingRequest = storage.getPendingFriendRelationship(req.user.id, targetUserId);
+  const activities = (Array.isArray(target.activities) ? target.activities : [])
+    .map(safeActivity)
+    .filter(Boolean)
+    .slice(0, 10);
+
+  if (!activities.length && target.customStatus) {
+    activities.push({
+      id: 'custom-status',
+      name: 'Özel Durum',
+      details: String(target.customStatus).slice(0, 160),
+      state: '',
+      imageUrl: null,
+      startedAt: null,
+      type: 'custom-status',
+    });
+  }
+
+  return res.json({
+    user: { ...target, status: storage.getUserStatus(targetUserId) },
+    server: server ? {
+      id: server.id,
+      name: server.name,
+      icon: server.icon || null,
+      createdAt: server.createdAt || null,
+    } : null,
+    serverMember,
+    viewer: viewerMember ? {
+      isOwner: viewerMember.isOwner,
+      permissions: viewerMember.permissions,
+      canManageRoles: viewerMember.isOwner,
+    } : null,
+    availableRoles: viewerMember?.isOwner ? storage.getServerRoles(server.id) : [],
+    relationship: {
+      isSelf: req.user.id === targetUserId,
+      isFriend: Boolean(friendship),
+      friendsSince: friendship?.createdAt || null,
+      pendingRequest,
+      isBlocked: storage.getBlockedUsers(req.user.id).some(user => user.id === targetUserId),
+    },
+    mutualFriends: storage.getMutualFriends(req.user.id, targetUserId),
+    mutualServers: storage.getMutualServers(req.user.id, targetUserId),
+    note: req.user.id === targetUserId ? '' : storage.getProfileNote(req.user.id, targetUserId),
+    activities,
+  });
+});
+
+router.put('/:userId/note', (req, res) => {
+  const targetUserId = String(req.params.userId || '').trim();
+  if (!storage.getUserById(targetUserId)) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+  if (targetUserId === req.user.id) return res.status(400).json({ error: 'Kendi profiline özel not ekleyemezsin.' });
+  try {
+    const note = storage.setProfileNote(req.user.id, targetUserId, req.body?.note ?? '');
+    return res.json({ note });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Not kaydedilemedi.' });
   }
 });
 

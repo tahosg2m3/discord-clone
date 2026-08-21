@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CornerUpLeft, FileText, Flag, History, Pencil, Pin, SmilePlus, Trash2, X } from 'lucide-react';
@@ -9,10 +9,22 @@ import toast from 'react-hot-toast';
 import UserPopover from '../profile/UserPopover';
 import { useServer } from '../../context/ServerContext';
 import { createReport, getMessageEditHistory } from '../../services/platformApi';
+import { registerAudioOutputTarget } from '../../services/audioOutputService';
 
 const QUICK_REACTIONS = ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}'];
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
 const COUNTRY_FLAG_PATTERN = /(\p{Regional_Indicator}{2})/gu;
+
+function OutputRoutedAudio(props) {
+  const audioRef = useRef(null);
+
+  useEffect(() => {
+    if (!audioRef.current) return undefined;
+    return registerAudioOutputTarget(audioRef.current);
+  }, []);
+
+  return <audio ref={audioRef} {...props} />;
+}
 
 function renderCountryFlagsWithTwemoji(content = '') {
   return String(content).replace(COUNTRY_FLAG_PATTERN, flag => {
@@ -70,7 +82,7 @@ export default function Message({
   const { currentServer } = useServer();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
-  const [showProfile, setShowProfile] = useState(false);
+  const [profileAnchor, setProfileAnchor] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [editHistory, setEditHistory] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -171,7 +183,7 @@ export default function Message({
 
   return (
     <>
-      {showProfile && <UserPopover targetUser={messageUser} onClose={() => setShowProfile(false)} />}
+      {profileAnchor && <UserPopover targetUser={messageUser} anchorRect={profileAnchor} onClose={() => setProfileAnchor(null)} />}
       {editHistory && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setEditHistory(null)}>
           <section className="w-full max-w-lg rounded-2xl border border-white/[0.08] bg-[#151d2c] p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -243,7 +255,10 @@ export default function Message({
         <div className="relative flex items-start space-x-4 pl-[56px]">
           {!grouped && (
             <div
-              onClick={() => setShowProfile(true)}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setProfileAnchor({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+              }}
               className="absolute left-4 top-0.5 flex h-10 w-10 cursor-pointer select-none items-center justify-center rounded-full text-white font-semibold shadow-sm transition-opacity hover:opacity-80"
               style={{ backgroundColor: avatarColor }}
             >
@@ -254,7 +269,10 @@ export default function Message({
           <div className="min-w-0 flex-1 overflow-hidden">
             {!grouped && (
               <div className="mb-0.5 flex items-baseline space-x-2">
-                <span onClick={() => setShowProfile(true)} className="cursor-pointer text-[1rem] font-medium text-[#F2F3F5] hover:underline">
+                <span onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setProfileAnchor({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+                }} className="cursor-pointer text-[1rem] font-medium text-[#F2F3F5] hover:underline">
                   {message.username}
                 </span>
                 {(message.bot || message.type === 'bot' || message.author?.bot) && <span className="rounded bg-[#5865F2] px-1 py-0.5 text-[9px] font-bold uppercase leading-none text-white">Bot</span>}
@@ -320,7 +338,7 @@ export default function Message({
                       ) : isAudio ? (
                         <div key={`${url}-${index}`} className="w-full max-w-md rounded-xl border border-white/[0.08] bg-[#1e293b] p-3">
                           <p className="mb-2 text-xs font-semibold text-[#94a3b8]">🎙️ {label}</p>
-                          <audio controls preload="metadata" src={url} className="h-10 w-full" />
+                          <OutputRoutedAudio controls preload="metadata" src={url} className="h-10 w-full" />
                         </div>
                       ) : (
                         <a key={`${url}-${index}`} href={url} target="_blank" rel="noopener noreferrer" className="flex max-w-full items-center gap-3 rounded-xl border border-white/[0.08] bg-[#1e293b] px-3 py-2 text-[#cbd5e1] transition-colors hover:bg-[#26354b]">
