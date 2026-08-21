@@ -1,7 +1,8 @@
 {
-  "name": "discord-clone",
-  "version": "1.0.0",
-  "description": "Discord-like chat application",
+  "name": "tahosapp",
+  "version": "1.1.0",
+  "description": "Tahosapp desktop communication application",
+  "author": "tahosg2m3",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
@@ -15,7 +16,7 @@
   },
   "build": {
     "appId": "com.chatapp.discord-clone",
-    "productName": "Discord Clone",
+    "productName": "tahosapp",
     "asar": true,
     "electronFuses": {
       "runAsNode": false,
@@ -81,7 +82,25 @@
       }
     ],
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "icon": "installer/tahosapp.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "tahosapp",
+      "runAfterFinish": true,
+      "installerLanguages": ["tr_TR", "en_US"],
+      "license": "installer/license_tr.txt",
+      "include": "installer/installer.nsh",
+      "installerIcon": "installer/tahosapp.ico",
+      "uninstallerIcon": "installer/tahosapp.ico",
+      "artifactName": "tahosapp-Setup-${version}.${ext}",
+      "uninstallDisplayName": "tahosapp ${version}"
     },
     "mac": {
       "target": ["dmg"],
@@ -92,9 +111,9 @@
       "entitlementsInherit": "electron/entitlements.mac.plist",
       "extendInfo": {
         "LSMultipleInstancesProhibited": true,
-        "NSMicrophoneUsageDescription": "Discord Clone sesli sohbet için mikrofonunu kullanır.",
-        "NSCameraUsageDescription": "Discord Clone görüntülü sohbet için kameranı kullanır.",
-        "NSAudioCaptureUsageDescription": "Discord Clone ekran yayını sırasında sistem sesini paylaşmak için ses yakalama izni kullanır."
+        "NSMicrophoneUsageDescription": "tahosapp sesli sohbet için mikrofonunu kullanır.",
+        "NSCameraUsageDescription": "tahosapp görüntülü sohbet için kameranı kullanır.",
+        "NSAudioCaptureUsageDescription": "tahosapp ekran yayını sırasında sistem sesini paylaşmak için ses yakalama izni kullanır."
       }
     },
     "linux": {
