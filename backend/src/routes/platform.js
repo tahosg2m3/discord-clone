@@ -1,13 +1,20 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 const { messageService } = require('../services/messageService');
 const { platformService } = require('../services/platformService');
 const { disconnectUserFromServerVoice } = require('../sockets/handlers/voiceHandler');
 const { emitAudit, emitToChannelViewers, emitToServerMembers } = require('../sockets/authorizedEmit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'platform'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'platform'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'platform'));
+const publicReadRateLimit = rateLimit(createRateLimitOptions('publicRead', 'platform-public'));
+const webhookRateLimit = rateLimit(createRateLimitOptions('webhook', 'platform-webhook'));
 
 const CHANNEL_TYPES = new Set([
   'text',
@@ -203,7 +210,7 @@ function publicTemplate(template) {
 }
 
 // Public invite preview and server discovery do not expose member or secret data.
-router.get('/invites/:code', (req, res) => {
+router.get('/invites/:code', publicReadRateLimit, (req, res) => {
   const invite = platformService.getInviteByCode(text(req.params.code, 64));
   if (!invite || invite.revokedAt || (invite.expiresAt && invite.expiresAt <= Date.now())) {
     return res.status(404).json({ error: 'Davet geçersiz veya süresi dolmuş.' });
@@ -219,7 +226,7 @@ router.get('/invites/:code', (req, res) => {
   });
 });
 
-router.get('/discovery', (req, res) => {
+router.get('/discovery', publicReadRateLimit, (req, res) => {
   const result = platformService.listDiscoverableServers({
     query: text(req.query.query, 100),
     category: text(req.query.category, 50),
@@ -228,7 +235,7 @@ router.get('/discovery', (req, res) => {
   return res.json(result);
 });
 
-router.post('/webhooks/:webhookId/:token/messages', async (req, res) => {
+router.post('/webhooks/:webhookId/:token/messages', webhookRateLimit, async (req, res) => {
   try {
     const webhook = platformService.getWebhookByToken(text(req.params.token, 200));
     if (!webhook || webhook.id !== text(req.params.webhookId, 100)) {
@@ -257,7 +264,7 @@ router.post('/webhooks/:webhookId/:token/messages', async (req, res) => {
   }
 });
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 // Invitations
 router.get('/servers/:serverId/invites', (req, res) => {

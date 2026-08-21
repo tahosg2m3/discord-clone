@@ -1,9 +1,14 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'users'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'users'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'users'));
 
 function privateUser(user) {
   if (!user) return null;
@@ -35,7 +40,7 @@ function emitSocialUpdate(req, userIds) {
   });
 }
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 // Eski kullanıcı adıyla şifresiz giriş endpoint'i güvenlik nedeniyle kaldırıldı.
 router.post('/login', (req, res) => res.status(410).json({

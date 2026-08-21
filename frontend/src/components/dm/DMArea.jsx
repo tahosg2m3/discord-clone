@@ -9,6 +9,7 @@ import Message from '../chat/Message';
 import MessageInput from '../chat/MessageInput';
 import TypingIndicator from '../chat/TypingIndicator';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import GroupDMAvatar from './GroupDMAvatar';
 import GroupDMDetailsPanel from './GroupDMDetailsPanel';
 import { useDirectCall } from '../../context/DirectCallContext';
@@ -220,6 +221,7 @@ export default function DMArea() {
   const title = groupDM ? (activeDM.name || 'Yeni Grup') : directUser.username;
   const avatarColor = getColorForString(title);
   const initial = title[0].toUpperCase();
+  const directAvatarUrl = groupDM ? null : resolveSafeAvatarUrl(directUser.avatar);
   const pinnedMessages = messages.filter((message) => message.isPinned);
   const mentionSuggestions = groupDM
     ? (activeDM.members || []).filter((member) => String(member.id) !== String(user.id))
@@ -259,7 +261,7 @@ export default function DMArea() {
 
       <div ref={messageListRef} onScroll={handleScroll} className="custom-scrollbar flex-1 overflow-y-auto px-5 py-4">
         <div className="mb-7 mt-5 border-b border-white/[0.06] pb-6">
-          {groupDM ? <div className="mb-4"><GroupDMAvatar conversation={activeDM} size={80} /></div> : directUser.avatar && !directUser.avatar.includes('ui-avatars.com') ? <img src={directUser.avatar} className="mb-4 h-20 w-20 rounded-full object-cover" alt="" /> : <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full text-3xl font-bold text-white" style={{ backgroundColor: avatarColor }}>{initial}</div>}
+          {groupDM ? <div className="mb-4"><GroupDMAvatar conversation={activeDM} size={80} /></div> : directAvatarUrl ? <img src={directAvatarUrl} className="mb-4 h-20 w-20 rounded-full object-cover" alt="" /> : <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full text-3xl font-bold text-white" style={{ backgroundColor: avatarColor }}>{initial}</div>}
           <h1 className="mb-2 text-3xl font-bold text-[#f8fafc]">{title}</h1>
           <p className="text-[15px] text-[#94a3b8]">{groupDM ? <>Bu, <strong>{title}</strong> grup mesajının başlangıcıdır.</> : <>Bu, <strong>{directUser.username}</strong> ile olan mesaj geçmişinin başlangıcıdır.</>}</p>
         </div>

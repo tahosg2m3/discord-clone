@@ -1,8 +1,12 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'gifs'));
+const externalRateLimit = rateLimit(createRateLimitOptions('external', 'gifs'));
 const GIPHY_API_ROOT = 'https://api.giphy.com/v1/gifs';
 
 function safeImageUrl(value) {
@@ -25,9 +29,9 @@ function normalizeGif(item) {
   };
 }
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth);
 
-router.get('/', async (req, res) => {
+router.get('/', externalRateLimit, async (req, res) => {
   const apiKey = String(process.env.GIPHY_API_KEY || '').trim();
   if (!apiKey) {
     return res.status(503).json({

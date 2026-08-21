@@ -1,13 +1,18 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { messageService } = require('../services/messageService');
 const { groupDmService } = require('../services/groupDmService');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'dm'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'dm'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'dm'));
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 router.get('/messages/:conversationId', (req, res) => {
   const conversation = storage.getServerById(req.params.conversationId);

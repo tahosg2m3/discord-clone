@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { useServer } from '../../context/ServerContext';
 import { getColorForString } from '../../utils/colors';
+import { resolveSafeMediaUrl } from '../../utils/safeMediaUrl';
 import MemberManagementModal from './MemberManagementModal';
 import RoleManagementModal from './RoleManagementModal';
 import {
@@ -54,15 +55,19 @@ export default function ServerSettingsModal({ onClose }) {
   const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState('');
+  const [failedServerIconUrl, setFailedServerIconUrl] = useState('');
 
   const isOwner = Boolean(currentServer && user?.id && currentServer.creatorId === user.id);
   const serverColor = useMemo(() => getColorForString(currentServer?.name || 'Sunucu'), [currentServer?.name]);
+  const safeServerIconUrl = resolveSafeMediaUrl(serverIcon);
+  const serverIconPreviewUrl = safeServerIconUrl === failedServerIconUrl ? null : safeServerIconUrl;
 
   useEffect(() => {
     if (!currentServer?.id) return undefined;
 
     setServerName(currentServer.name || '');
     setServerIcon(currentServer.icon || '');
+    setFailedServerIconUrl('');
     setServerBanner(currentServer.banner || '');
     setDescription(currentServer.description || '');
     setDiscoveryEnabled(Boolean(currentServer.discoveryEnabled));
@@ -245,7 +250,7 @@ export default function ServerSettingsModal({ onClose }) {
                 <div className="mt-7 rounded-lg border border-black/25 bg-[#2B2D31] p-5">
                   <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
                     <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[28px] text-3xl font-bold text-white shadow-lg" style={{ backgroundColor: serverColor }}>
-                      {serverIcon ? <img src={serverIcon} alt="Sunucu ikonu" className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : serverName.slice(0, 2).toUpperCase()}
+                      {serverIconPreviewUrl ? <img src={serverIconPreviewUrl} alt="Sunucu ikonu" className="h-full w-full object-cover" onError={() => setFailedServerIconUrl(serverIconPreviewUrl)} /> : serverName.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0 flex-1">
                       <label className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-[#B5BAC1]">Sunucu adı</label>

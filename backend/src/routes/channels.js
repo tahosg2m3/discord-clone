@@ -1,12 +1,17 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 
 const storage = require('../storage/inMemory');
 const { messageService } = require('../services/messageService');
 const { platformService } = require('../services/platformService');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitOptions } = require('../middleware/rateLimit');
 const { emitAudit, getChannelViewerSockets } = require('../sockets/authorizedEmit');
 
 const router = express.Router();
+const authRateLimit = rateLimit(createRateLimitOptions('auth', 'channels'));
+const readRateLimit = rateLimit(createRateLimitOptions('read', 'channels'));
+const mutationRateLimit = rateLimit(createRateLimitOptions('mutation', 'channels'));
 
 function writeChannelAudit(req, serverId, action, channel, metadata = {}) {
   const entry = platformService.addAuditLog(serverId, {
@@ -50,7 +55,7 @@ function getChannelAccess(channelId, userId, permission = 'VIEW_CHANNEL') {
   };
 }
 
-router.use(requireAuth);
+router.use(authRateLimit, requireAuth, readRateLimit, mutationRateLimit);
 
 router.get('/', (req, res) => {
   const serverId = String(req.query.serverId || '');

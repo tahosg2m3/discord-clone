@@ -1,5 +1,4 @@
 ﻿const { v4: uuidv4 } = require('uuid');
-const linkify = require('linkify-it')();
 const storage = require('../storage/inMemory'); // Storage'ı dahil ettik
 
 
@@ -17,6 +16,42 @@ function createSafeLinkMetadata(value) {
   } catch {
     return null;
   }
+}
+
+// Mesajı regex kalıbına dönüştürmeden yalnız açık HTTP(S) şemalarını tarar.
+// Böylece kullanıcı girdisi regex derlemesine giremez ve çalışma süresi
+// mesaj uzunluğuyla doğrusal kalır.
+function findFirstSafeLinkMetadata(value) {
+  const content = typeof value === 'string' ? value.slice(0, 10_000) : '';
+  const lowerContent = content.toLowerCase();
+  const firstHttp = lowerContent.indexOf('http://');
+  const firstHttps = lowerContent.indexOf('https://');
+  const firstIndexes = [firstHttp, firstHttps].filter(index => index >= 0);
+  let start = firstIndexes.length ? Math.min(...firstIndexes) : -1;
+
+  while (start >= 0 && start < content.length) {
+    let end = start;
+    while (end < content.length) {
+      const character = content[end];
+      const code = content.charCodeAt(end);
+      if (code <= 32 || character === '"' || character === "'" || character === '<' || character === '>' || character === '`') break;
+      end += 1;
+    }
+
+    let candidate = content.slice(start, end);
+    while (candidate && '.,!?;:)]}'.includes(candidate[candidate.length - 1])) {
+      candidate = candidate.slice(0, -1);
+    }
+    const metadata = createSafeLinkMetadata(candidate);
+    if (metadata) return metadata;
+
+    const nextHttp = lowerContent.indexOf('http://', start + 1);
+    const nextHttps = lowerContent.indexOf('https://', start + 1);
+    const nextIndexes = [nextHttp, nextHttps].filter(index => index >= 0);
+    start = nextIndexes.length ? Math.min(...nextIndexes) : -1;
+  }
+
+  return null;
 }
 
 function normalizeVoiceMessage(value) {
@@ -61,8 +96,7 @@ class MessageService {
     };
 
     // URL yerelde ayrıştırılır; backend hiçbir kullanıcı bağlantısına istek atmaz.
-    const matches = linkify.match(content);
-    if (matches && matches.length > 0) message.metadata = createSafeLinkMetadata(matches[0].url);
+    message.metadata = findFirstSafeLinkMetadata(content);
 
     // Storage'a kaydet (Bu sayede kalıcı olur)
     storage.addChannelMessage(channelId, message);
