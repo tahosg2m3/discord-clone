@@ -7,6 +7,7 @@ import { useDM } from '../../context/DMContext';
 import { useServer } from '../../context/ServerContext';
 import toast from 'react-hot-toast';
 import { blockUser, createReport } from '../../services/platformApi';
+import { resolveSafeMediaUrl } from '../../utils/safeMediaUrl';
 
 export default function UserPopover({ targetUser, onClose }) {
   const { user: currentUser } = useAuth();
@@ -22,6 +23,8 @@ export default function UserPopover({ targetUser, onClose }) {
   const initial = username?.[0]?.toUpperCase() || '?';
   const avatar = targetUser.serverAvatar || targetUser.avatar || targetUser.user?.avatar;
   const banner = targetUser.banner || targetUser.user?.banner;
+  const safeAvatarUrl = resolveSafeMediaUrl(avatar);
+  const safeBannerUrl = resolveSafeMediaUrl(banner);
   const presence = targetUser.status || targetUser.presenceStatus || 'offline';
 
   // ID Kopyalama
@@ -95,7 +98,9 @@ export default function UserPopover({ targetUser, onClose }) {
         </button>
 
         {/* Renkli Banner */}
-        <div className="h-[100px] w-full bg-cover bg-center" style={banner ? { backgroundImage: `url(${banner})`, backgroundColor: bannerColor } : { backgroundColor: bannerColor }} />
+        <div className="relative h-[100px] w-full overflow-hidden" style={{ backgroundColor: bannerColor }}>
+          {safeBannerUrl && <img src={safeBannerUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+        </div>
 
         <div className="px-4 pb-4 relative">
           {/* Avatar (Banner'ın üstüne taşar) */}
@@ -104,7 +109,7 @@ export default function UserPopover({ targetUser, onClose }) {
               className="w-20 h-20 rounded-full flex items-center justify-center text-white text-3xl font-bold shadow-inner"
               style={{ backgroundColor: avatarColor }}
             >
-              {avatar ? <img src={avatar} alt="" className="h-full w-full rounded-full object-cover" /> : initial}
+              {safeAvatarUrl ? <img src={safeAvatarUrl} alt="" className="h-full w-full rounded-full object-cover" /> : initial}
             </div>
             {/* Status (Eğer online durumu varsa buraya nokta eklenebilir) */}
             {presence && (
@@ -117,7 +122,10 @@ export default function UserPopover({ targetUser, onClose }) {
             <h2 className="text-xl font-bold text-[#F2F3F5]">{username}</h2>
             {targetUser.customStatus && <p className="mt-1 text-xs text-[#B5BAC1]">{targetUser.customStatus}</p>}
             {(targetUser.bio || targetUser.user?.bio) && <p className="mt-3 whitespace-pre-wrap text-sm leading-5 text-[#DBDEE1]">{targetUser.bio || targetUser.user?.bio}</p>}
-            {(targetUser.roles || []).filter(role => !role.isDefault).length > 0 && <div className="mt-3 flex flex-wrap gap-1">{targetUser.roles.filter(role => !role.isDefault).map(role => <span key={role.id} className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${role.color || '#64748b'}22`, color: role.color || '#cbd5e1' }}>{role.icon && <img src={role.icon} alt="" className="mr-1 inline h-3 w-3 rounded-full" />}{role.name}</span>)}</div>}
+            {(targetUser.roles || []).filter(role => !role.isDefault).length > 0 && <div className="mt-3 flex flex-wrap gap-1">{targetUser.roles.filter(role => !role.isDefault).map(role => {
+              const roleIconUrl = resolveSafeMediaUrl(role.icon);
+              return <span key={role.id} className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${role.color || '#64748b'}22`, color: role.color || '#cbd5e1' }}>{roleIconUrl && <img src={roleIconUrl} alt="" className="mr-1 inline h-3 w-3 rounded-full" />}{role.name}</span>;
+            })}</div>}
             
             <div className="mt-1 flex items-center justify-between group">
               <span className="font-mono text-[11px] bg-[#1E1F22] px-2 py-1 rounded-md text-[#DBDEE1]">
