@@ -18,6 +18,15 @@ function sortMembers(members) {
   });
 }
 
+function activityLabel(type) {
+  return ({ listening: 'Dinliyor', watching: 'İzliyor', working: 'Çalışıyor', competing: 'Yarışıyor', custom: 'Etkin' })[type] || 'Oynuyor';
+}
+
+function memberActivityText(activity) {
+  if (activity?.playbackStatus === 'paused') return `Duraklatıldı: ${activity.name}`;
+  return `${activityLabel(activity?.type)}: ${activity?.name}`;
+}
+
 export default function MemberList() {
   const { currentServer } = useServer();
   const { socket, isPresenceReady } = useSocket();
@@ -52,6 +61,14 @@ export default function MemberList() {
 
     socket.on('presence:update', handlePresence);
 
+    const handleRichPresence = ({ userId, activities, serverId }) => {
+      if (serverId && serverId !== currentServer?.id) return;
+      setMembers(previousMembers => previousMembers.map(member => (
+        String(member.id) === String(userId) ? { ...member, activities: activities || [] } : member
+      )));
+    };
+    socket.on('rich-presence:update', handleRichPresence);
+
     const refreshMembers = ({ serverId }) => {
       if (!serverId || serverId === currentServer?.id) loadMembers();
     };
@@ -61,6 +78,7 @@ export default function MemberList() {
 
     return () => {
       socket.off('presence:update', handlePresence);
+      socket.off('rich-presence:update', handleRichPresence);
       socket.off('server:members-changed', refreshMembers);
       socket.off('server:member-updated', refreshMembers);
       socket.off('roles:changed', refreshMembers);
@@ -139,7 +157,11 @@ export default function MemberList() {
                   </div>
                 )}
                 <div className={`text-[11px] ${online ? 'text-[#34d399]' : 'text-[#64748b]'}`}>
-                  {online ? member.status === 'idle' ? 'Boşta' : member.status === 'dnd' ? 'Rahatsız etmeyin' : (member.customStatus || 'Çevrimiçi') : 'Çevrimdışı'}
+                  {online
+                    ? member.activities?.[0]
+                      ? memberActivityText(member.activities[0])
+                      : member.status === 'idle' ? 'Boşta' : member.status === 'dnd' ? 'Rahatsız etmeyin' : (member.customStatus || 'Çevrimiçi')
+                    : 'Çevrimdışı'}
                 </div>
               </div>
             </button>

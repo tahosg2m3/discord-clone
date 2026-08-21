@@ -7,6 +7,17 @@ import { getColorForString } from '../../utils/colors';
 import { resolveSafeAvatarUrl } from '../../utils/safeMediaUrl';
 import UserSettingsModal from './UserSettingsModal'; // YENİ MODALI İÇE AKTARDIK
 import { useVoice } from '../../context/VoiceContext';
+import { getRichPresenceSettings } from '../../services/api';
+
+function activityLabel(type) {
+  return ({ listening: 'Dinliyor', watching: 'İzliyor', working: 'Çalışıyor', competing: 'Yarışıyor', custom: 'Etkin' })[type] || 'Oynuyor';
+}
+
+
+function activityText(activity) {
+  if (activity?.playbackStatus === 'paused') return `Duraklatıldı: ${activity.name}`;
+  return `${activityLabel(activity?.type)}: ${activity?.name}`;
+}
 
 export default function UserProfile() {
   const { user, logout, updateUserData } = useAuth();
@@ -23,6 +34,7 @@ export default function UserProfile() {
   const [showMenu, setShowMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false); // AYARLAR MODAL STATE'İ
   const [settingsInitialTab, setSettingsInitialTab] = useState('account');
+  const [richPresenceActivities, setRichPresenceActivities] = useState([]);
 
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
@@ -41,6 +53,24 @@ export default function UserProfile() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    let active = true;
+    getRichPresenceSettings()
+      .then(payload => { if (active) setRichPresenceActivities(payload.activities || []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!socket || !user?.id) return undefined;
+    const handleRichPresence = payload => {
+      if (String(payload?.userId || '') === String(user.id)) setRichPresenceActivities(payload.activities || []);
+    };
+    socket.on('rich-presence:update', handleRichPresence);
+    return () => socket.off('rich-presence:update', handleRichPresence);
+  }, [socket, user?.id]);
+
   if (!user) return null;
 
   const avatarColor = getColorForString(user.username || 'U');
@@ -55,6 +85,7 @@ export default function UserProfile() {
     ))
   ));
   const hasVoiceConnection = isInVoice || isListedInVoice;
+  const primaryActivity = richPresenceActivities[0];
 
   const changePresence = (nextStatus) => {
     updateUserData({ presenceStatus: nextStatus });
@@ -87,7 +118,7 @@ export default function UserProfile() {
 
           <div className="flex flex-col min-w-0">
             <span className="text-[14px] font-semibold text-[#F2F3F5] truncate block leading-tight">{user.username}</span>
-            <span className="text-[12px] text-[#94a3b8] truncate block leading-tight">{user.customStatus || presenceLabels[presence] || 'Bağlanıyor…'}</span>
+            <span className="text-[12px] text-[#94a3b8] truncate block leading-tight">{primaryActivity ? activityText(primaryActivity) : user.customStatus || presenceLabels[presence] || 'Bağlanıyor…'}</span>
           </div>
         </div>
 

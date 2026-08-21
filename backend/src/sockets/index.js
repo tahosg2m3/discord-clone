@@ -8,6 +8,7 @@ const callHandler = require('./handlers/callHandler');
 const { userService } = require('../services/userService');
 const storage = require('../storage/inMemory');
 const { verifyAuthToken } = require('../middleware/auth');
+const { richPresenceService } = require('../services/richPresenceService');
 
 const activeUserSockets = new Map();
 
@@ -111,6 +112,7 @@ module.exports = (io) => {
           });
         });
         broadcastPresence(io, user.id, publicStatus);
+        richPresenceService.broadcast(user.id);
       }
 
       socket.emit('presence:ready', { status: selectedStatus, visibleStatus: publicStatus });
@@ -165,6 +167,7 @@ module.exports = (io) => {
             io.to(`user:${friend.id}`).emit('status:update', { userId, status: 'offline' });
           });
           broadcastPresence(io, userId, 'offline');
+          richPresenceService.broadcast(userId);
         }
       }
 

@@ -7,6 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const { createRateLimitOptions } = require('../middleware/rateLimit');
 const { requireServerMember, requireServerOwner } = require('../middleware/authorization');
 const { emitAudit, emitToServerMembers, getChannelViewerSockets } = require('../sockets/authorizedEmit');
+const { richPresenceService } = require('../services/richPresenceService');
 
 const router = express.Router();
 const authRateLimit = rateLimit(createRateLimitOptions('auth', 'servers'));
@@ -146,7 +147,10 @@ router.patch('/:serverId/members/me/profile', authRateLimit, requireAuth, mutati
 });
 
 router.get('/:id/members', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => (
-  res.json(storage.getServerMembersWithDetails(req.params.id))
+  res.json(storage.getServerMembersWithDetails(req.params.id).map(member => ({
+    ...member,
+    activities: richPresenceService.getActivities(member.id),
+  })))
 ));
 
 router.get('/:id', authRateLimit, requireAuth, readRateLimit, requireServerMember, (req, res) => res.json(req.server));

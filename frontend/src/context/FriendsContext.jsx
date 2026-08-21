@@ -36,16 +36,24 @@ export const FriendsProvider = ({ children }) => {
     if (!socket) return;
 
     // Listen for status updates
-    socket.on('status:update', ({ userId, status }) => {
+    const handleStatusUpdate = ({ userId, status, customStatus }) => {
       setFriends(prev =>
         prev.map(friend =>
-          friend.id === userId ? { ...friend, status } : friend
+          friend.id === userId ? { ...friend, status, ...(customStatus !== undefined ? { customStatus } : {}) } : friend
         )
       );
-    });
+    };
+    const handleRichPresenceUpdate = ({ userId, activities }) => {
+      setFriends(previous => previous.map(friend => (
+        String(friend.id) === String(userId) ? { ...friend, activities: activities || [] } : friend
+      )));
+    };
+    socket.on('status:update', handleStatusUpdate);
+    socket.on('rich-presence:update', handleRichPresenceUpdate);
 
     return () => {
-      socket.off('status:update');
+      socket.off('status:update', handleStatusUpdate);
+      socket.off('rich-presence:update', handleRichPresenceUpdate);
     };
   }, [socket]);
 

@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Activity,
   ArrowLeft,
   Bell,
   Check,
+  Copy,
   Globe2,
   Headphones,
+  KeyRound,
   Lock,
   Mail,
   Mic,
   MonitorUp,
   Palette,
+  Play,
   RotateCcw,
   Settings,
   Shield,
@@ -18,6 +22,7 @@ import {
   UserX,
   Video,
   Volume2,
+  Trash2,
   X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -32,12 +37,25 @@ import {
   saveAccessibilityPreferences,
 } from '../../utils/accessibilityPreferences';
 import {
+  readAutomaticPresencePreferences,
+  saveAutomaticPresencePreferences,
+} from '../../utils/automaticPresencePreferences';
+import {
+  clearRichPresenceActivity,
+  createRichPresenceToken,
+  getRichPresenceSettings,
+  revokeRichPresenceToken,
+  setRichPresenceActivity,
+  updateRichPresenceSettings,
+} from '../../services/api';
+import {
   getNotificationPreferences,
   listBlockedUsers,
   platformRequest,
   saveNotificationPreferences,
   unblockUser,
 } from '../../services/platformApi';
+import RichPresenceCard from './RichPresenceCard';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -47,6 +65,7 @@ const SETTING_GROUPS = [
     items: [
       { id: 'account', label: 'Hesabım', icon: User, description: 'Giriş bilgileri ve hesap özeti' },
       { id: 'profile', label: 'Profiller', icon: Palette, description: 'Görünen profilini düzenle' },
+      { id: 'rich-presence', label: 'Rich Presence', icon: Activity, description: 'Otomatik oyun ve müzik etkinlikleri' },
       { id: 'privacy', label: 'Gizlilik ve Güvenlik', icon: Shield, description: 'Engellenen kullanıcıları yönet' },
     ],
   },
@@ -165,6 +184,7 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const [locale, setLocale] = useState(user.locale || localStorage.getItem('chat:locale') || 'tr');
   const [theme, setTheme] = useState(user.theme || localStorage.getItem('chat:theme') || 'dark');
   const [accessibilityPrefs, setAccessibilityPrefs] = useState(readAccessibilityPreferences);
+  const [automaticPresencePrefs, setAutomaticPresencePrefs] = useState(readAutomaticPresencePreferences);
   const [notificationPrefs, setNotificationPrefs] = useState({
     desktop: true,
     mentions: true,
@@ -183,6 +203,16 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const [emailCode, setEmailCode] = useState('');
   const [emailChangeTicket, setEmailChangeTicket] = useState(null);
   const [isEmailLoading, setIsEmailLoading] = useState(false);
+  const [richPresenceState, setRichPresenceState] = useState({ enabled: true, token: { exists: false }, activities: [] });
+  const [generatedPresenceToken, setGeneratedPresenceToken] = useState('');
+  const [presenceBusy, setPresenceBusy] = useState('');
+  const [testPresence, setTestPresence] = useState({
+    name: 'Örnek Oyun',
+    type: 'playing',
+    details: 'Bölüm 4 — Kristal Mağaralar',
+    state: 'Skor: 12.450',
+    imageUrl: '',
+  });
 
   const avatarColor = getColorForString(username || user.username || 'U');
   const initial = (username || user.username || '?').slice(0, 1).toUpperCase();
@@ -211,7 +241,20 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     listBlockedUsers()
       .then(payload => setBlockedUsers(payload.users || payload.blockedUsers || []))
       .catch(() => {});
+    getRichPresenceSettings()
+      .then(payload => setRichPresenceState(payload))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!socket || !user?.id) return undefined;
+    const handleRichPresence = payload => {
+      if (String(payload?.userId || '') !== String(user.id)) return;
+      setRichPresenceState(current => ({ ...current, activities: payload.activities || [] }));
+    };
+    socket.on('rich-presence:update', handleRichPresence);
+    return () => socket.off('rich-presence:update', handleRichPresence);
+  }, [socket, user?.id]);
 
   const handleUnblock = async targetUserId => {
     try {
@@ -220,6 +263,107 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
       toast.success('Kullanıcının engeli kaldırıldı.');
     } catch (error) {
       toast.error(error.message);
+    }
+  };
+
+  const handleCreatePresenceToken = async () => {
+    if (richPresenceState.token?.exists && !window.confirm('Mevcut entegrasyon anahtarı geçersiz olacak. Yeni anahtar oluşturulsun mu?')) return;
+    setPresenceBusy('token');
+    try {
+      const payload = await createRichPresenceToken();
+      setGeneratedPresenceToken(payload.token || '');
+      setRichPresenceState(current => ({
+        ...current,
+        token: {
+          exists: true,
+          lastFour: payload.lastFour,
+          createdAt: payload.createdAt,
+          lastUsedAt: payload.lastUsedAt,
+        },
+        activities: payload.activities || current.activities,
+      }));
+      toast.success('Yeni Rich Presence anahtarı oluşturuldu. Bu anahtar yalnızca şimdi gösterilir.');
+    } catch (error) {
+      toast.error(error.message || 'Entegrasyon anahtarı oluşturulamadı.');
+    } finally {
+      setPresenceBusy('');
+    }
+  };
+
+  const handleRevokePresenceToken = async () => {
+    if (!window.confirm('Entegrasyon anahtarını iptal edip aktif Rich Presence oturumlarını kapatmak istiyor musun?')) return;
+    setPresenceBusy('token');
+    try {
+      await revokeRichPresenceToken();
+      setGeneratedPresenceToken('');
+      setRichPresenceState(current => ({ ...current, token: { exists: false }, activities: [] }));
+      toast.success('Entegrasyon anahtarı iptal edildi.');
+    } catch (error) {
+      toast.error(error.message || 'Anahtar iptal edilemedi.');
+    } finally {
+      setPresenceBusy('');
+    }
+  };
+
+  const handleToggleRichPresence = async enabled => {
+    setPresenceBusy('toggle');
+    try {
+      const payload = await updateRichPresenceSettings(enabled);
+      setRichPresenceState(payload);
+      toast.success(enabled ? 'Rich Presence paylaşımı açıldı.' : 'Rich Presence paylaşımı kapatıldı.');
+    } catch (error) {
+      toast.error(error.message || 'Rich Presence tercihi güncellenemedi.');
+    } finally {
+      setPresenceBusy('');
+    }
+  };
+
+  const handlePublishTestPresence = async () => {
+    if (!testPresence.name.trim()) return toast.error('Uygulama veya oyun adı gerekli.');
+    setPresenceBusy('test');
+    try {
+      const payload = await setRichPresenceActivity({
+        ...testPresence,
+        sessionId: 'settings-preview',
+        startedAt: Date.now(),
+        ttlSeconds: 900,
+        metadata: testPresence.type === 'playing' ? { Seviye: '24', Mod: 'Dereceli' } : {},
+        music: testPresence.type === 'listening' ? {
+          song: testPresence.details || 'Örnek Parça',
+          artist: testPresence.state || 'Örnek Sanatçı',
+          durationMs: 240000,
+          positionMs: 45000,
+        } : undefined,
+      });
+      setRichPresenceState(current => ({ ...current, activities: payload.activities || [] }));
+      toast.success('Test etkinliği profilinde yayınlanıyor.');
+    } catch (error) {
+      toast.error(error.message || 'Test etkinliği yayınlanamadı.');
+    } finally {
+      setPresenceBusy('');
+    }
+  };
+
+  const handleClearTestPresence = async () => {
+    setPresenceBusy('test');
+    try {
+      const payload = await clearRichPresenceActivity('settings-preview');
+      setRichPresenceState(current => ({ ...current, activities: payload.activities || [] }));
+      toast.success('Test etkinliği kapatıldı.');
+    } catch (error) {
+      toast.error(error.message || 'Test etkinliği kapatılamadı.');
+    } finally {
+      setPresenceBusy('');
+    }
+  };
+
+  const copyPresenceToken = async () => {
+    if (!generatedPresenceToken) return;
+    try {
+      await navigator.clipboard.writeText(generatedPresenceToken);
+      toast.success('Entegrasyon anahtarı kopyalandı.');
+    } catch (_) {
+      toast.error('Anahtar panoya kopyalanamadı.');
     }
   };
 
@@ -267,6 +411,10 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
 
   const updateAccessibility = (key, value) => {
     setAccessibilityPrefs(current => saveAccessibilityPreferences({ ...current, [key]: value }));
+  };
+
+  const updateAutomaticPresencePreference = (key, value) => {
+    setAutomaticPresencePrefs(current => saveAutomaticPresencePreferences({ ...current, [key]: value }));
   };
 
   const resetAccessibility = () => {
@@ -420,6 +568,101 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     </SettingsSection>
   );
 
+  const renderRichPresence = () => (
+    <div className="space-y-5">
+      <SettingsSection icon={Activity} title="Bağımsız Rich Presence" description="Windows'ta çalışan oyunlar ile Spotify ve YouTube Music oturumları otomatik algılanır. Kullanıcı hesabı bağlamak, anahtar girmek veya oyuna eklenti kurmak gerekmez; Discord da kullanılmaz.">
+        <ToggleRow
+          checked={richPresenceState.enabled !== false}
+          disabled={presenceBusy === 'toggle'}
+          onChange={handleToggleRichPresence}
+          label="Etkinlik paylaşımına izin ver"
+          description="Kapattığında bütün aktif oturumlar anında kaldırılır; entegrasyonlar yeniden etkinleştirene kadar yayın yapamaz."
+        />
+        <div className="mt-4 rounded-lg border border-white/[0.06] bg-[#1E1F22] p-4 text-sm text-[#949BA4]">
+          <p><strong className="text-[#DBDEE1]">Canlı oturum:</strong> {richPresenceState.activities?.length || 0} / {richPresenceState.limits?.maxSessions || 5}</p>
+          <p className="mt-1 text-xs">Windows medya bilgisi yaklaşık 3 saniyede bir yenilenir. Ayrıntılı seçenekler yalnız bu cihazdaki otomatik algılamayı etkiler.</p>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={Settings} title="Otomatik Algılama" description="Uygulamanın bu bilgisayardaki oyun ve medya oturumlarını otomatik paylaşmasını yönet. Değişiklikler kaydetme düğmesine gerek olmadan hemen uygulanır.">
+        <div className="space-y-3">
+          <ToggleRow checked={automaticPresencePrefs.enabled} onChange={value => updateAutomaticPresencePreference('enabled', value)} label="Bu cihazda otomatik algılamayı kullan" description="Kapalıyken otomatik oyun, müzik ve video etkinlikleri kaldırılır; özel entegrasyon etkinlikleri etkilenmez." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showGames} onChange={value => updateAutomaticPresencePreference('showGames', value)} label="Oynadığım oyunları göster" description="Tanımlanan oyun süreçlerini profilinde Oynuyor olarak yayınla." />
+        </div>
+      </SettingsSection>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <SettingsSection icon={Activity} title="Oyun Gizliliği" description="Oyun etkinliğinde hangi ayrıntıların görüneceğini seç.">
+          <div className="space-y-3">
+            <ToggleRow disabled={!automaticPresencePrefs.enabled || !automaticPresencePrefs.showGames} checked={automaticPresencePrefs.showGamePlatform} onChange={value => updateAutomaticPresencePreference('showGamePlatform', value)} label="Oyun platformunu göster" description="Steam, Xbox, Epic Games veya algılanan diğer mağaza adını paylaş." />
+            <ToggleRow disabled={!automaticPresencePrefs.enabled || !automaticPresencePrefs.showGames} checked={automaticPresencePrefs.showGameElapsed} onChange={value => updateAutomaticPresencePreference('showGameElapsed', value)} label="Geçen oyun süresini göster" description="Oyunun ne kadar süredir açık olduğunu profil kartında göster." />
+          </div>
+        </SettingsSection>
+
+        <SettingsSection icon={Headphones} title="Müzik Servisleri" description="Hangi müzik kaynaklarının profilinde görünebileceğini belirle.">
+          <div className="space-y-3">
+            <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showSpotify} onChange={value => updateAutomaticPresencePreference('showSpotify', value)} label="Spotify" description="Spotify masaüstü uygulamasındaki müziği göster." />
+            <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showYouTubeMusic} onChange={value => updateAutomaticPresencePreference('showYouTubeMusic', value)} label="YouTube Music" description="Yalnız YouTube Music uygulamasını göster; normal YouTube videoları buna dahil değildir." />
+            <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showOtherMusic} onChange={value => updateAutomaticPresencePreference('showOtherMusic', value)} label="Diğer müzik oynatıcıları" description="Windows medya denetimine bağlanan diğer bağımsız müzik uygulamalarını göster." />
+            <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showPausedMusic} onChange={value => updateAutomaticPresencePreference('showPausedMusic', value)} label="Duraklatılmış müziği göster" description="Şarkı durdurulduğunda etkinliği silmek yerine Duraklatıldı olarak tut." />
+          </div>
+        </SettingsSection>
+      </div>
+
+      <SettingsSection icon={Headphones} title="Müzikte Gösterilecek Bilgiler" description="Şarkı etkinliğinde paylaşılacak her alanı ayrı ayrı seç.">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showSongTitle} onChange={value => updateAutomaticPresencePreference('showSongTitle', value)} label="Şarkı adı" description="Kapalıysa gerçek isim yerine genel bir şarkı açıklaması kullanılır." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showArtist} onChange={value => updateAutomaticPresencePreference('showArtist', value)} label="Sanatçı" description="Şarkının sanatçı veya kanal bilgisini göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showAlbum} onChange={value => updateAutomaticPresencePreference('showAlbum', value)} label="Albüm" description="Windows tarafından sağlanıyorsa albüm adını göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showMusicProgress} onChange={value => updateAutomaticPresencePreference('showMusicProgress', value)} label="Şarkı ilerleme çubuğu" description="Geçerli saniyeyi, toplam süreyi ve ilerleme çubuğunu göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showMusicElapsed} onChange={value => updateAutomaticPresencePreference('showMusicElapsed', value)} label="Dinleme süresi" description="Etkinliğin ne kadar süredir açık olduğunu ayrıca göster." />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={Video} title="Video ve Tarayıcı Etkinlikleri" description="Normal YouTube ve diğer tarayıcı videoları müzikten ayrı yönetilir. Gizlilik için tarayıcı videoları varsayılan olarak kapalıdır.">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showBrowserVideos} onChange={value => updateAutomaticPresencePreference('showBrowserVideos', value)} label="Tarayıcı videolarını göster" description="Chrome, Edge, Firefox, Opera ve Vivaldi medya oturumlarını İzliyor olarak paylaş." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showOtherVideos} onChange={value => updateAutomaticPresencePreference('showOtherVideos', value)} label="Diğer video uygulamalarını göster" description="Tarayıcı dışındaki video oynatıcı etkinliklerine izin ver." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showPausedVideos} onChange={value => updateAutomaticPresencePreference('showPausedVideos', value)} label="Duraklatılmış videoları göster" description="Video durduğunda etkinliği Duraklatıldı olarak profilde tut." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showVideoTitle} onChange={value => updateAutomaticPresencePreference('showVideoTitle', value)} label="Video başlığı" description="İzlenen videonun başlığını göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showVideoCreator} onChange={value => updateAutomaticPresencePreference('showVideoCreator', value)} label="Kanal veya içerik üreticisi" description="Windows medya bilgisindeki sanatçı/kanal alanını göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showVideoProgress} onChange={value => updateAutomaticPresencePreference('showVideoProgress', value)} label="Video ilerleme çubuğu" description="Geçerli saniyeyi ve toplam süreyi göster." />
+          <ToggleRow disabled={!automaticPresencePrefs.enabled} checked={automaticPresencePrefs.showVideoElapsed} onChange={value => updateAutomaticPresencePreference('showVideoElapsed', value)} label="İzleme süresi" description="Etkinliğin ne kadar süredir açık olduğunu ayrıca göster." />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={KeyRound} title="İsteğe Bağlı Gelişmiş Entegrasyon" description="Otomatik algılama için gerekli değildir. Yalnız özel skor, seviye veya parti bilgisi göndermek isteyen uygulamalar içindir ve mesajlarına, arkadaşlarına ya da hesap ayarlarına erişemez.">
+        {generatedPresenceToken && (
+          <div className="mb-4 rounded-lg border border-[#f0b232]/35 bg-[#f0b232]/10 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-[#f0b232]">Şimdi güvenli bir yere kaydet — tekrar gösterilmeyecek</p>
+            <div className="mt-3 flex gap-2"><input readOnly value={generatedPresenceToken} className="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-[#111214] px-3 py-2 font-mono text-xs text-[#DBDEE1] outline-none" /><button type="button" onClick={copyPresenceToken} className="flex items-center gap-2 rounded-md bg-[#5865F2] px-3 py-2 text-xs font-bold text-white hover:bg-[#4752C4]"><Copy className="h-4 w-4" /> Kopyala</button></div>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[#1E1F22] p-4">
+          <div><p className="text-sm font-bold text-[#DBDEE1]">{richPresenceState.token?.exists ? `Anahtar etkin ••••${richPresenceState.token.lastFour || ''}` : 'Henüz entegrasyon anahtarı yok'}</p><p className="mt-1 text-xs text-[#949BA4]">{richPresenceState.token?.createdAt ? `Oluşturulma: ${new Date(richPresenceState.token.createdAt).toLocaleString('tr-TR')}` : 'Yeni bir anahtar oluşturup oyununa veya uygulamana ekle.'}</p></div>
+          <div className="flex gap-2"><button type="button" disabled={presenceBusy === 'token'} onClick={handleCreatePresenceToken} className="flex items-center gap-2 rounded-md bg-[#5865F2] px-3 py-2 text-sm font-semibold text-white hover:bg-[#4752C4] disabled:opacity-50"><KeyRound className="h-4 w-4" /> {richPresenceState.token?.exists ? 'Yenile' : 'Anahtar Oluştur'}</button>{richPresenceState.token?.exists && <button type="button" disabled={presenceBusy === 'token'} onClick={handleRevokePresenceToken} className="flex items-center gap-2 rounded-md bg-[#DA373C] px-3 py-2 text-sm font-semibold text-white hover:bg-[#b92d32] disabled:opacity-50"><Trash2 className="h-4 w-4" /> İptal Et</button>}</div>
+        </div>
+        <div className="mt-4 rounded-lg border border-white/[0.06] bg-[#111214] p-4">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-[#949BA4]">HTTP bağlantısı</p>
+          <pre className="custom-scrollbar overflow-x-auto whitespace-pre-wrap break-all text-xs leading-5 text-[#b5bac1]">{`PUT ${API_URL}/rich-presence\nAuthorization: Presence YOUR_INTEGRATION_KEY\nContent-Type: application/json`}</pre>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection icon={Play} title="Profilde Test Et" description="SDK bağlamadan görünümü deneyebilirsin. Test etkinliği 15 dakika sonra otomatik kapanır.">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <label className="block"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Uygulama veya oyun</span><input value={testPresence.name} onChange={event => setTestPresence(current => ({ ...current, name: event.target.value.slice(0, 80) }))} className="w-full rounded-md border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]" /></label>
+          <SelectField label="Etkinlik türü" value={testPresence.type} onChange={event => setTestPresence(current => ({ ...current, type: event.target.value }))}><option value="playing">Oynuyor</option><option value="listening">Dinliyor</option><option value="watching">İzliyor</option><option value="working">Çalışıyor</option><option value="competing">Yarışıyor</option><option value="custom">Özel</option></SelectField>
+          <label className="block"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Ayrıntı</span><input value={testPresence.details} onChange={event => setTestPresence(current => ({ ...current, details: event.target.value.slice(0, 160) }))} placeholder="Bölüm, şarkı veya çalışma bilgisi" className="w-full rounded-md border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]" /></label>
+          <label className="block"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Durum</span><input value={testPresence.state} onChange={event => setTestPresence(current => ({ ...current, state: event.target.value.slice(0, 160) }))} placeholder="Skor, sanatçı veya ekip bilgisi" className="w-full rounded-md border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]" /></label>
+          <label className="block lg:col-span-2"><span className="mb-2 block text-xs font-bold uppercase text-[#B5BAC1]">Görsel bağlantısı (isteğe bağlı)</span><input value={testPresence.imageUrl} onChange={event => setTestPresence(current => ({ ...current, imageUrl: event.target.value.slice(0, 2048) }))} placeholder="https://ornek.com/game-cover.png" className="w-full rounded-md border border-transparent bg-[#1E1F22] px-3 py-2.5 text-sm text-[#DBDEE1] outline-none focus:border-[#00A8FC]" /></label>
+        </div>
+        <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={handleClearTestPresence} disabled={presenceBusy === 'test'} className="rounded-md bg-[#4E5058] px-4 py-2 text-sm font-semibold text-white hover:bg-[#6D6F78] disabled:opacity-50">Testi Kapat</button><button type="button" onClick={handlePublishTestPresence} disabled={presenceBusy === 'test' || richPresenceState.enabled === false} className="flex items-center gap-2 rounded-md bg-[#23A559] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D8046] disabled:opacity-50"><Play className="h-4 w-4" /> Profilde Yayınla</button></div>
+      </SettingsSection>
+
+      {richPresenceState.activities?.length > 0 && <SettingsSection icon={Activity} title="Şu Anda Yayınlananlar" description="Değişiklikler arkadaşlarının ve ortak sunuculardaki kullanıcıların ekranına anlık ulaşır."><div className="space-y-3">{richPresenceState.activities.map(activity => <RichPresenceCard key={activity.sessionId || activity.id} activity={activity} />)}</div></SettingsSection>}
+    </div>
+  );
+
   const renderPrivacy = () => (
     <SettingsSection icon={UserX} title="Engellenen Kullanıcılar" description="Engellediğin kişiler sana doğrudan mesaj gönderemez ve seninle etkileşime geçemez.">
       <div className="space-y-2">
@@ -515,7 +758,7 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     </SettingsSection>
   );
 
-  const tabContent = { account: renderAccount, profile: renderProfile, privacy: renderPrivacy, voice: renderVoice, notifications: renderNotifications, appearance: renderAppearance, accessibility: renderAccessibility, language: renderLanguage };
+  const tabContent = { account: renderAccount, profile: renderProfile, 'rich-presence': renderRichPresence, privacy: renderPrivacy, voice: renderVoice, notifications: renderNotifications, appearance: renderAppearance, accessibility: renderAccessibility, language: renderLanguage };
 
   return createPortal(
     <div className="fixed inset-0 z-[99999] bg-[#313338] text-[#DBDEE1]">

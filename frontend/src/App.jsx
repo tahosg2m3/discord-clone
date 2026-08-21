@@ -24,6 +24,7 @@ import ForumArea from './components/forum/ForumArea';
 import OnboardingGate from './components/server/OnboardingGate';
 import NsfwGate from './components/server/NsfwGate';
 import DirectCallOverlay from './components/call/DirectCallOverlay';
+import AutomaticRichPresence from './components/profile/AutomaticRichPresence';
 
 function AppContent() {
   const { user } = useAuth();
@@ -167,6 +168,7 @@ function App() {
             <ServerProvider>
               <VoiceProvider>
                 <DirectCallProvider>
+                  <AutomaticRichPresence />
                   <AppContent />
                   <DirectCallOverlay />
                   <Toaster position="bottom-right" toastOptions={{ style: { background: '#111214', color: '#DBDEE1', borderRadius: '8px', fontSize: '14px', fontWeight: '500' } }} />
