@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Peer } from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useSocket } from './SocketContext';
@@ -9,6 +9,8 @@ import {
 } from '../services/rnnoiseProcessor';
 import { FEEDBACK_SOUND_IDS, playFeedbackSound } from '../services/feedbackSoundService';
 import { setGlobalAudioOutputDevice } from '../services/audioOutputService';
+import { getPeerIceServers, withPeerIceServers } from '../services/turnService';
+import { PEER_CONFIG as RUNTIME_PEER_CONFIG } from '../config/runtimeConfig';
 
 const VoiceContext = createContext(null);
 
@@ -16,10 +18,7 @@ const VoiceContext = createContext(null);
 // ayarlanabilir. Peer sunucusunda discovery kapalı olduğu için istemci tarafında
 // rastgele peer keşfi yapılmaz.
 const PEER_CONFIG = {
-  host: import.meta.env.VITE_PEER_HOST || '127.0.0.1',
-  port: Number(import.meta.env.VITE_PEER_PORT || 9000),
-  path: import.meta.env.VITE_PEER_PATH || '/peerjs',
-  secure: import.meta.env.VITE_PEER_SECURE === 'true',
+  ...RUNTIME_PEER_CONFIG,
   debug: import.meta.env.DEV ? 2 : 0,
 };
 
@@ -454,22 +453,45 @@ export const VoiceProvider = ({ children }) => {
   }, [audioQuality]);
   useEffect(() => { localStorage.setItem('voice:screen-preset', screenSharePreset); }, [screenSharePreset]);
 
+  const refreshAvailableDevices = useCallback(async ({ requestPermission = false } = {}) => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setVoiceError('Bu cihaz ses aygıtlarını listelemeyi desteklemiyor.');
+      return { success: false, error: 'unsupported' };
+    }
+
+    let permissionStream = null;
+    try {
+      const alreadyHasMicrophone = hasLiveAudioTrack(sourceAudioStreamRef.current);
+      if (requestPermission && !alreadyHasMicrophone) {
+        permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const nextDevices = {
+        audioinput: devices.filter(device => device.kind === 'audioinput'),
+        audiooutput: devices.filter(device => device.kind === 'audiooutput'),
+        videoinput: devices.filter(device => device.kind === 'videoinput'),
+      };
+      setAvailableDevices(nextDevices);
+      return { success: true, devices: nextDevices };
+    } catch (error) {
+      const message = error?.name === 'NotAllowedError'
+        ? 'Mikrofon izni verilmedi. Gerçek aygıt adlarını göstermek için izne izin ver.'
+        : 'Ses aygıtları okunamadı. Windows gizlilik ve ses ayarlarını kontrol et.';
+      setVoiceError(message);
+      return { success: false, error: message };
+    } finally {
+      stopStream(permissionStream);
+    }
+  }, []);
+
   useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return undefined;
-    const refreshDevices = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        setAvailableDevices({
-          audioinput: devices.filter(device => device.kind === 'audioinput'),
-          audiooutput: devices.filter(device => device.kind === 'audiooutput'),
-          videoinput: devices.filter(device => device.kind === 'videoinput'),
-        });
-      } catch { /* Tarayıcı cihaz listesini vermeyebilir. */ }
-    };
-    refreshDevices();
-    navigator.mediaDevices.addEventListener?.('devicechange', refreshDevices);
-    return () => navigator.mediaDevices.removeEventListener?.('devicechange', refreshDevices);
-  }, []);
+    const handleDeviceChange = () => { void refreshAvailableDevices(); };
+    void refreshAvailableDevices();
+    navigator.mediaDevices.addEventListener?.('devicechange', handleDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', handleDeviceChange);
+  }, [refreshAvailableDevices]);
 
   useEffect(() => {
     const editable = target => target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
@@ -927,6 +949,7 @@ export const VoiceProvider = ({ children }) => {
         audioQuality: quality,
       });
       const rawStream = capture.stream;
+      void refreshAvailableDevices();
       if (
         requestId !== microphoneRequestIdRef.current
         || !isInVoiceRef.current
@@ -1494,86 +1517,103 @@ export const VoiceProvider = ({ children }) => {
   useEffect(() => {
     if (!user?.id) return undefined;
 
-    const newPeer = new Peer(undefined, PEER_CONFIG);
-    peerRef.current = newPeer;
+    let newPeer = null;
+    let disposed = false;
 
-    newPeer.on('open', (id) => {
-      const hadPeerId = peerIdRef.current;
-      peerIdRef.current = id;
-      setPeerId(id);
-      setVoiceError('');
-
-      // PeerJS bağlantısı yeniden oluşturulduysa, aktif ses kanalını yeni peerId
-      // ile tekrar kaydet. Başarısız olursa yerel oturumu temizleriz.
-      if (hadPeerId && isInVoiceRef.current && socketRef.current?.connected) {
-        void rejoinActiveVoice();
+    const initializePeer = async () => {
+      let iceServers = [];
+      try {
+        iceServers = await getPeerIceServers();
+      } catch (error) {
+        console.warn('TURN kimliği alınamadı; varsayılan PeerJS ICE yapılandırması kullanılacak.', error);
       }
-    });
+      if (disposed) return;
 
-    newPeer.on('call', (call) => {
-      const activeChannel = activeVoiceChannelRef.current;
-      const localUser = userRef.current;
-      const remoteUserId = String(call.metadata?.userId || '');
-      const remoteChannelId = String(call.metadata?.channelId || '');
-      const participant = participantsRef.current[remoteUserId];
-      const isVerifiedParticipant = Boolean(
-        isInVoiceRef.current
-          && activeChannel?.id
-          && remoteUserId
-          && !sameId(remoteUserId, localUser?.id)
-          && sameId(remoteChannelId, activeChannel.id)
-          && participant?.peerId
-          && sameId(participant.peerId, call.peer),
-      );
+      newPeer = new Peer(undefined, withPeerIceServers(PEER_CONFIG, iceServers));
+      peerRef.current = newPeer;
 
-      if (!isVerifiedParticipant) {
-        // PeerJS çağrısı aktif kanal/katılımcı doğrulamasından geçmediyse medya
-        // akışını hiç cevaplamadan kapatılır.
-        call.close();
-        return;
-      }
+      newPeer.on('open', (id) => {
+        const hadPeerId = peerIdRef.current;
+        peerIdRef.current = id;
+        setPeerId(id);
+        setVoiceError('');
 
-      if (call.metadata?.mediaKind === 'video') {
-        const previousCall = incomingVideoCallsRef.current[remoteUserId];
-        if (previousCall && previousCall !== call) previousCall.close();
-        incomingVideoCallsRef.current[remoteUserId] = call;
-        const mode = call.metadata?.mode === 'screen' ? 'screen' : 'camera';
+        // PeerJS bağlantısı yeniden oluşturulduysa, aktif ses kanalını yeni peerId
+        // ile tekrar kaydet. Başarısız olursa yerel oturumu temizleriz.
+        if (hadPeerId && isInVoiceRef.current && socketRef.current?.connected) {
+          void rejoinActiveVoice();
+        }
+      });
 
-        call.answer();
-        call.on('stream', (stream) => {
-          if (!stream?.getVideoTracks().length) return;
-          const wasAlreadyWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
-          setRemoteVideoStreams((previous) => {
-            const updated = { ...previous, [remoteUserId]: { stream, mode } };
-            remoteVideoStreamsRef.current = updated;
-            return updated;
+      newPeer.on('call', (call) => {
+        const activeChannel = activeVoiceChannelRef.current;
+        const localUser = userRef.current;
+        const remoteUserId = String(call.metadata?.userId || '');
+        const remoteChannelId = String(call.metadata?.channelId || '');
+        const participant = participantsRef.current[remoteUserId];
+        const isVerifiedParticipant = Boolean(
+          isInVoiceRef.current
+            && activeChannel?.id
+            && remoteUserId
+            && !sameId(remoteUserId, localUser?.id)
+            && sameId(remoteChannelId, activeChannel.id)
+            && participant?.peerId
+            && sameId(participant.peerId, call.peer),
+        );
+
+        if (!isVerifiedParticipant) {
+          // PeerJS çağrısı aktif kanal/katılımcı doğrulamasından geçmediyse medya
+          // akışını hiç cevaplamadan kapatılır.
+          call.close();
+          return;
+        }
+
+        if (call.metadata?.mediaKind === 'video') {
+          const previousCall = incomingVideoCallsRef.current[remoteUserId];
+          if (previousCall && previousCall !== call) previousCall.close();
+          incomingVideoCallsRef.current[remoteUserId] = call;
+          const mode = call.metadata?.mode === 'screen' ? 'screen' : 'camera';
+
+          call.answer();
+          call.on('stream', (stream) => {
+            if (!stream?.getVideoTracks().length) return;
+            const wasAlreadyWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
+            setRemoteVideoStreams((previous) => {
+              const updated = { ...previous, [remoteUserId]: { stream, mode } };
+              remoteVideoStreamsRef.current = updated;
+              return updated;
+            });
+            if (!wasAlreadyWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_JOINED_STREAM);
           });
-          if (!wasAlreadyWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_JOINED_STREAM);
-        });
 
-        const removeVideoCall = () => {
-          if (incomingVideoCallsRef.current[remoteUserId] === call) {
-            delete incomingVideoCallsRef.current[remoteUserId];
-            const wasWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
-            removeRemoteVideo(remoteUserId);
-            if (wasWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_LEFT_STREAM);
-          }
-        };
-        call.on('close', removeVideoCall);
-        call.on('error', removeVideoCall);
-        return;
-      }
+          const removeVideoCall = () => {
+            if (incomingVideoCallsRef.current[remoteUserId] === call) {
+              delete incomingVideoCallsRef.current[remoteUserId];
+              const wasWatching = Boolean(remoteVideoStreamsRef.current[remoteUserId]);
+              removeRemoteVideo(remoteUserId);
+              if (wasWatching) playFeedbackSound(FEEDBACK_SOUND_IDS.USER_LEFT_STREAM);
+            }
+          };
+          call.on('close', removeVideoCall);
+          call.on('error', removeVideoCall);
+          return;
+        }
 
-      call.answer(createOutgoingStream());
-      attachCall(call, remoteUserId);
-    });
+        call.answer(createOutgoingStream());
+        attachCall(call, remoteUserId);
+      });
 
-    newPeer.on('error', (error) => {
-      console.error('PeerJS hatası:', error);
-      setVoiceError(`Ses sunucusuna bağlanılamadı (${error.type || 'bilinmeyen hata'}).`);
-    });
+      newPeer.on('error', (error) => {
+        console.error('PeerJS hatası:', error);
+        setVoiceError(`Ses sunucusuna bağlanılamadı (${error.type || 'bilinmeyen hata'}).`);
+      });
+    };
+
+    void initializePeer();
 
     return () => {
+      disposed = true;
+      if (!newPeer) return;
       if (peerRef.current === newPeer) peerRef.current = null;
       if (peerIdRef.current === newPeer.id) {
         peerIdRef.current = null;
@@ -1903,6 +1943,7 @@ export const VoiceProvider = ({ children }) => {
         isCameraOn: Boolean(cameraStream),
         voiceError,
         availableDevices,
+        refreshAvailableDevices,
         inputDeviceId,
         outputDeviceId,
         cameraDeviceId,

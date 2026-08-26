@@ -33,3 +33,4 @@ data-encryption-migration.json
 data-encryption-migration.json.*.tmp
 
 backend/datayedek*.json
+.deploy/

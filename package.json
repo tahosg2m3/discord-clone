@@ -10,8 +10,11 @@
     "dev:frontend": "cd frontend && npm run dev",
     "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
     "build:frontend": "cd frontend && npm run build",
+    "build:frontend:desktop": "cd frontend && cross-env VITE_BASE_PATH=/ npm run build",
     "build:electron": "electron-builder",
-    "build": "npm run build:frontend && npm run build:electron",
+    "build": "npm run build:frontend:desktop && npm run build:electron",
+    "deploy:production": "powershell -NoProfile -ExecutionPolicy Bypass -File deployment/deploy.ps1",
+    "publish:production": "powershell -NoProfile -ExecutionPolicy Bypass -File deployment/publish.ps1",
     "postinstall": "cd backend && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -32,54 +35,9 @@
     },
     "files": [
       "electron/**/*",
+      "deployment/app-config.json",
       "frontend/dist/**/*",
       "THIRD_PARTY_NOTICES.md"
-    ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!data.json",
-          "!data.json.*.tmp",
-          "!data.sqlite",
-          "!data.sqlite-*",
-          "!data.sqlite*.tmp",
-          "!discord-clone.sqlite",
-          "!discord-clone.sqlite-*",
-          "!discord-clone.sqlite*.tmp",
-          "!data.sqlite-key",
-          "!data.sqlite-key.*.tmp",
-          "!data-encryption.key",
-          "!data-encryption.key.*.tmp",
-          "!data-encryption-migration.json",
-          "!data-encryption-migration.json.*.tmp",
-          "!data-encryption-key.safe",
-          "!data-encryption-key.safe.*.tmp",
-          "!datayedek.json",
-          "!datayedek2.json",
-          "!datayedek*.json",
-          "!.env*",
-          "!uploads/**/*",
-          "!node_modules/.bin/**/*",
-          "!node_modules/nodemon/**/*",
-          "!node_modules/@types/**/*",
-          "!**/*.md",
-          "!**/*.map"
-        ]
-      },
-      {
-        "from": "backend/node_modules",
-        "to": "backend/node_modules",
-        "filter": [
-          "**/*",
-          "!nodemon/**/*",
-          "!@types/**/*",
-          "!**/*.md",
-          "!**/*.map"
-        ]
-      }
     ],
     "win": {
       "target": ["nsis"],

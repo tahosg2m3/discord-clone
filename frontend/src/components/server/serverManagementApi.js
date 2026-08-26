@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../../config/runtimeConfig';
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('chat_token');

@@ -10,9 +10,9 @@ import UserPopover from '../profile/UserPopover';
 import { useServer } from '../../context/ServerContext';
 import { createReport, getMessageEditHistory } from '../../services/platformApi';
 import { registerAudioOutputTarget } from '../../services/audioOutputService';
+import { API_ORIGIN } from '../../config/runtimeConfig';
 
 const QUICK_REACTIONS = ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}'];
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
 const COUNTRY_FLAG_PATTERN = /(\p{Regional_Indicator}{2})/gu;
 
 function OutputRoutedAudio(props) {

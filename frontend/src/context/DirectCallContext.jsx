@@ -3,19 +3,18 @@ import { Peer } from 'peerjs';
 import { useAuth } from './AuthContext';
 import { useSocket } from './SocketContext';
 import { useVoice } from './VoiceContext';
+import { getPeerIceServers, withPeerIceServers } from '../services/turnService';
 import {
   FEEDBACK_SOUND_IDS,
   playFeedbackSound,
   startFeedbackSoundLoop,
 } from '../services/feedbackSoundService';
+import { PEER_CONFIG as RUNTIME_PEER_CONFIG } from '../config/runtimeConfig';
 
 const DirectCallContext = createContext(null);
 
 const PEER_CONFIG = {
-  host: import.meta.env.VITE_PEER_HOST || '127.0.0.1',
-  port: Number(import.meta.env.VITE_PEER_PORT || 9000),
-  path: import.meta.env.VITE_PEER_PATH || '/peerjs',
-  secure: import.meta.env.VITE_PEER_SECURE === 'true',
+  ...RUNTIME_PEER_CONFIG,
   debug: import.meta.env.DEV ? 2 : 0,
 };
 
@@ -164,41 +163,58 @@ export function DirectCallProvider({ children }) {
 
   useEffect(() => {
     if (!user?.id) return undefined;
-    const peer = new Peer(undefined, PEER_CONFIG);
-    peerRef.current = peer;
-    setPeerReady(false);
+    let peer = null;
+    let disposed = false;
 
-    peer.on('open', (id) => {
-      if (peerRef.current !== peer) return;
-      peerIdRef.current = id;
-      setPeerReady(true);
-    });
-
-    peer.on('call', (incomingMediaCall) => {
-      const current = callRef.current;
-      const metadata = incomingMediaCall.metadata || {};
-      const valid = current
-        && current.direction === 'incoming'
-        && ['connecting', 'active'].includes(current.status)
-        && metadata.callKind === 'direct'
-        && sameId(metadata.callId, current.id)
-        && sameId(metadata.userId, current.callerId)
-        && localStreamRef.current;
-      if (!valid) {
-        incomingMediaCall.close();
-        return;
+    const initializePeer = async () => {
+      let iceServers = [];
+      try {
+        iceServers = await getPeerIceServers();
+      } catch (error) {
+        console.warn('TURN kimliği alınamadı; varsayılan PeerJS ICE yapılandırması kullanılacak.', error);
       }
-      incomingMediaCall.answer(localStreamRef.current);
-      attachMediaCall(incomingMediaCall);
-    });
+      if (disposed) return;
 
-    peer.on('error', (error) => {
-      if (['peer-unavailable', 'network', 'server-error'].includes(error?.type)) {
-        setCallError('Arama bağlantısı kurulamadı.');
-      }
-    });
+      peer = new Peer(undefined, withPeerIceServers(PEER_CONFIG, iceServers));
+      peerRef.current = peer;
+      setPeerReady(false);
+
+      peer.on('open', (id) => {
+        if (peerRef.current !== peer) return;
+        peerIdRef.current = id;
+        setPeerReady(true);
+      });
+
+      peer.on('call', (incomingMediaCall) => {
+        const current = callRef.current;
+        const metadata = incomingMediaCall.metadata || {};
+        const valid = current
+          && current.direction === 'incoming'
+          && ['connecting', 'active'].includes(current.status)
+          && metadata.callKind === 'direct'
+          && sameId(metadata.callId, current.id)
+          && sameId(metadata.userId, current.callerId)
+          && localStreamRef.current;
+        if (!valid) {
+          incomingMediaCall.close();
+          return;
+        }
+        incomingMediaCall.answer(localStreamRef.current);
+        attachMediaCall(incomingMediaCall);
+      });
+
+      peer.on('error', (error) => {
+        if (['peer-unavailable', 'network', 'server-error'].includes(error?.type)) {
+          setCallError('Arama bağlantısı kurulamadı.');
+        }
+      });
+    };
+
+    void initializePeer();
 
     return () => {
+      disposed = true;
+      if (!peer) return;
       if (peerRef.current === peer) peerRef.current = null;
       if (peerIdRef.current === peer.id) peerIdRef.current = null;
       setPeerReady(false);

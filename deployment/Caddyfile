@@ -1,0 +1,57 @@
+{
+	admin 127.0.0.1:2019
+}
+
+(common_security) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		-Server
+	}
+}
+
+api.tahosapp.com.tr {
+	import common_security
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy 127.0.0.1:3001
+}
+
+voice.tahosapp.com.tr {
+	import common_security
+	reverse_proxy 127.0.0.1:9000
+}
+
+www.tahosapp.com.tr {
+	redir https://tahosapp.com.tr{uri} permanent
+}
+
+tahosapp.com.tr {
+	import common_security
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' https://api.tahosapp.com.tr wss://api.tahosapp.com.tr https://voice.tahosapp.com.tr wss://voice.tahosapp.com.tr; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), geolocation=()"
+	}
+
+	handle_path /downloads/* {
+		root * /var/www/tahosapp/downloads
+		header Content-Disposition "attachment"
+		file_server
+	}
+
+	redir /app /app/ permanent
+	handle_path /app/* {
+		root * /var/www/tahosapp-web/current/app
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle {
+		root * /var/www/tahosapp-web/current
+		file_server
+	}
+}

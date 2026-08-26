@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="tahosapp — mesajlaşma, sesli sohbet, görüntülü görüşme ve ekran paylaşımı." />
+  <title>tahosapp — Konuş, paylaş, birlikte kal</title>
+  <link rel="icon" href="/tahosapp.ico" />
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: #f8f7ff; background: #090b13; }
+    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 20% 15%, rgba(91, 78, 255, .24), transparent 34rem), radial-gradient(circle at 85% 75%, rgba(24, 214, 203, .14), transparent 32rem); }
+    header { position: relative; z-index: 2; width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 22px 0; display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: white; text-decoration: none; font-size: 20px; font-weight: 900; }
+    .brand img { width: 34px; height: 34px; }
+    .nav-link { color: #cbd0df; text-decoration: none; font-weight: 700; }
+    .nav-link:hover { color: white; }
+    main { position: relative; width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 54px 0 76px; }
+    .card { width: 100%; display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; padding: clamp(30px, 6vw, 72px); border: 1px solid rgba(255,255,255,.1); border-radius: 32px; background: rgba(17, 20, 34, .82); box-shadow: 0 28px 90px rgba(0,0,0,.38); backdrop-filter: blur(20px); }
+    .eyebrow { color: #8e87ff; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; font-size: 13px; }
+    h1 { margin: 14px 0 18px; font-size: clamp(46px, 8vw, 84px); line-height: .95; letter-spacing: -.055em; }
+    p { margin: 0; color: #b8bdd0; font-size: clamp(17px, 2vw, 20px); line-height: 1.65; }
+    .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 15px 22px; border-radius: 14px; color: white; text-decoration: none; font-weight: 800; transition: .18s ease; }
+    .button.primary { background: linear-gradient(135deg, #6557ff, #7d43ff); box-shadow: 0 12px 34px rgba(101,87,255,.28); }
+    .button.secondary { border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.055); }
+    .button:hover { transform: translateY(-1px); filter: brightness(1.1); }
+    .version { color: #858ba0; font-size: 14px; }
+    .visual { min-height: 350px; display: grid; place-items: center; border-radius: 28px; background: linear-gradient(145deg, rgba(101,87,255,.22), rgba(17,20,34,.24)); border: 1px solid rgba(255,255,255,.08); }
+    .visual img { width: min(230px, 62%); aspect-ratio: 1; object-fit: contain; filter: drop-shadow(0 24px 34px rgba(44,29,144,.38)); }
+    .details { margin-top: 25px; color: #73798d; font-size: 13px; line-height: 1.6; }
+    .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 20px; }
+    .feature { padding: 20px; border: 1px solid rgba(255,255,255,.08); border-radius: 20px; background: rgba(17,20,34,.68); }
+    .feature strong { display: block; margin-bottom: 7px; font-size: 16px; }
+    .feature span { color: #9197aa; font-size: 14px; line-height: 1.5; }
+    code { color: #9da3b9; overflow-wrap: anywhere; }
+    @media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 760px) { header { padding-top: 16px; } .card { grid-template-columns: 1fr; gap: 28px; } .visual { min-height: 250px; order: -1; } .features { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><img src="/tahosapp.ico" alt="" /> tahosapp</a>
+    <a class="nav-link" href="/app/">Giriş yap</a>
+  </header>
+  <main>
+    <section class="card">
+      <div>
+        <div class="eyebrow">Bağlan • Konuş • Paylaş</div>
+        <h1>tahosapp</h1>
+        <p>Mesajlaşma, sesli sohbet, görüntülü görüşme, ekran paylaşımı ve topluluklarını tek bir yerde buluştur.</p>
+        <div class="actions">
+          <a class="button primary" href="/downloads/tahosapp-Setup-latest.exe" download>Windows için indir</a>
+          <a class="button secondary" href="/app/">Tarayıcıda aç</a>
+          <span class="version">v1.1.0 · Windows 10/11 · 64-bit</span>
+        </div>
+        <div class="details">
+          Kurulum paketi henüz ticari kod imzası taşımadığı için Windows ilk açılışta güvenlik uyarısı gösterebilir.<br />
+          SHA-256: <code>899dd8c0eebe83c376e2a83368871a1becf5e54e9f864a0c81853e50235a2afb</code>
+        </div>
+      </div>
+      <div class="visual" aria-hidden="true">
+        <img src="/tahosapp.ico" alt="" />
+      </div>
+    </section>
+    <section class="features" aria-label="Özellikler">
+      <div class="feature"><strong>Mesajlaşma</strong><span>Kanallar, özel mesajlar, dosyalar, GIF'ler ve topluluk özellikleri.</span></div>
+      <div class="feature"><strong>Ses ve görüntü</strong><span>RNNoise destekli net ses, kamera ve yüksek kaliteli ekran paylaşımı.</span></div>
+      <div class="feature"><strong>Topluluk yönetimi</strong><span>Roller, izinler, moderasyon, etkinlikler ve gelişmiş sunucu ayarları.</span></div>
+      <div class="feature"><strong>Masaüstü + Web</strong><span>Kurulumla masaüstünde veya indirmeden doğrudan tarayıcıda kullan.</span></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -54,7 +54,10 @@ const startPeerServer = () => {
     },
   };
   const peerServer = ExpressPeerServer(httpServer, {
-    path: '/peerjs',
+    // ExpressPeerServer kendi yolu ile `app.use` yolu birlikte eklenir.
+    // Her ikisini de `/peerjs` yapmak istemcinin gerçekte
+    // `/peerjs/peerjs/*` adresine bağlanmasını gerektiriyordu.
+    path: '/',
     allow_discovery: false,
     corsOptions: {
       origin: createPeerCorsOrigin(),
@@ -62,7 +65,7 @@ const startPeerServer = () => {
     },
   });
 
-  app.use(peerServer);
+  app.use('/peerjs', peerServer);
 
   peerServer.on('connection', client => {
     connectedClients.add(client);

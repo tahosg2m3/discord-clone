@@ -1,0 +1,9 @@
+{
+  "mode": "remote",
+  "apiOrigin": "https://api.example.com",
+  "socketUrl": "https://api.example.com",
+  "peerHost": "voice.example.com",
+  "peerPort": 443,
+  "peerPath": "/peerjs",
+  "peerSecure": true
+}

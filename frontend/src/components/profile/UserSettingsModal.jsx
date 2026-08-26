@@ -15,6 +15,7 @@ import {
   MonitorUp,
   Palette,
   Play,
+  RefreshCw,
   RotateCcw,
   Settings,
   Shield,
@@ -56,8 +57,7 @@ import {
   unblockUser,
 } from '../../services/platformApi';
 import RichPresenceCard from './RichPresenceCard';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL } from '../../config/runtimeConfig';
 
 const SETTING_GROUPS = [
   {
@@ -162,6 +162,7 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     voiceProcessingStatus = 'idle',
     voiceProcessingEngine = 'none',
     changeInputDevice,
+    refreshAvailableDevices,
     setOutputDeviceId,
     changeCameraDevice,
     setVoiceMode,
@@ -198,6 +199,7 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isInterfaceSaving, setIsInterfaceSaving] = useState(false);
   const [voiceSettingBusy, setVoiceSettingBusy] = useState('');
+  const [deviceRefreshBusy, setDeviceRefreshBusy] = useState(false);
   const [newEmail, setNewEmail] = useState(user.email || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [emailCode, setEmailCode] = useState('');
@@ -686,6 +688,23 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const renderVoice = () => (
     <div className="space-y-5">
       <SettingsSection icon={Mic} title="Ses Aygıtları" description="Bu ayarlar bir ses kanalında olmasan da kullanılabilir; aktif görüşmedeysen değişiklikler anında uygulanır.">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-[#1E1F22] px-4 py-3">
+          <p className="min-w-0 flex-1 text-xs leading-5 text-[#949BA4]">Gerçek mikrofon ve hoparlör adları görünmüyorsa aygıt iznini verip listeyi yeniden tara.</p>
+          <button type="button" disabled={deviceRefreshBusy} onClick={async () => {
+            if (typeof refreshAvailableDevices !== 'function') return;
+            setDeviceRefreshBusy(true);
+            try {
+              const result = await refreshAvailableDevices({ requestPermission: true });
+              if (result?.success) toast.success('Ses aygıtları yenilendi.');
+              else toast.error(result?.error || 'Ses aygıtları okunamadı.');
+            } finally {
+              setDeviceRefreshBusy(false);
+            }
+          }} className="flex shrink-0 items-center gap-2 rounded-md bg-[#5865F2] px-3 py-2 text-xs font-bold text-white hover:bg-[#4752C4] disabled:cursor-wait disabled:opacity-60">
+            <RefreshCw className={'h-4 w-4 ' + (deviceRefreshBusy ? 'animate-spin' : '')} />
+            {deviceRefreshBusy ? 'Taranıyor…' : 'Aygıtları tara ve izin ver'}
+          </button>
+        </div>
         <div className="grid gap-5 lg:grid-cols-2">
           <SelectField icon={Mic} label="Giriş aygıtı" value={inputDeviceId} onChange={event => { if (typeof changeInputDevice === 'function') void changeInputDevice(event.target.value); }}><option value="">Sistem varsayılanı</option>{availableDevices.audioinput.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || 'Mikrofon ' + (index + 1)}</option>)}</SelectField>
           <SelectField icon={Volume2} label="Çıkış aygıtı" value={outputDeviceId} onChange={event => { if (typeof setOutputDeviceId === 'function') setOutputDeviceId(event.target.value); }}><option value="">Sistem varsayılanı</option>{availableDevices.audiooutput.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || 'Hoparlör ' + (index + 1)}</option>)}</SelectField>

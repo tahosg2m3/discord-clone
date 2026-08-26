@@ -1,8 +1,7 @@
 import { Paperclip, Image as ImageIcon, File, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:3001';
+import { API_ORIGIN } from '../../config/runtimeConfig';
 
 export async function uploadChatFile(file) {
   if (!file) throw new Error('Dosya seçilmedi.');

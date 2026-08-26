@@ -37,6 +37,7 @@ const friendRoutes = require('./routes/friends');
 const uploadRoutes = require('./routes/upload');
 const gifRoutes = require('./routes/gifs');
 const richPresenceRoutes = require('./routes/richPresence');
+const turnRoutes = require('./routes/turn');
 const platformRoutes = require('./routes/platform');
 const { richPresenceService } = require('./services/richPresenceService');
 
@@ -46,14 +47,28 @@ const errorHandler = require('./middleware/errorHandler');
 const logger = require('./middleware/logger');
 
 const app = express();
+// Production traffic is proxied by Caddy on the same machine. Trust only
+// loopback proxies so req.ip and per-client rate limits use the real client IP
+// without accepting spoofed X-Forwarded-For headers from the public internet.
+app.set('trust proxy', 'loopback');
 const server = http.createServer(app);
+const configuredClientOrigins = String(process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean);
+const allowConfiguredClientOrigin = (origin, callback) => {
+  // Health checks and native/non-browser clients may omit Origin. Browser and
+  // Electron renderer requests must match the explicit allowlist exactly.
+  if (!origin || configuredClientOrigins.includes(origin)) callback(null, true);
+  else callback(new Error('Client origin is not allowed.'));
+};
 const uploadsDirectory = process.env.APP_DATA_DIR
   ? path.join(path.resolve(process.env.APP_DATA_DIR), 'uploads')
   : path.join(__dirname, '../uploads');
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: allowConfiguredClientOrigin,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -61,7 +76,7 @@ const io = new Server(server, {
 });
 
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: allowConfiguredClientOrigin,
   credentials: true,
 }));
 
@@ -83,6 +98,7 @@ app.use('/api/friends', friendRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/gifs', gifRoutes);
 app.use('/api/rich-presence', richPresenceRoutes);
+app.use('/api/turn-credentials', turnRoutes);
 // Yeni Discord-benzeri özellikler tam API yollarını kendi router'ında tanımlar.
 // Eski endpoint'ler yukarıda kalır ve geriye dönük uyumluluğunu korur.
 app.use('/api', platformRoutes);

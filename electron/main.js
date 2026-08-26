@@ -46,6 +46,7 @@ const APP_HOST = 'app';
 const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
 const APP_ENTRY_URL = `${APP_ORIGIN}/index.html`;
 const RENDERER_ROOT = path.resolve(__dirname, '../frontend/dist');
+const DEPLOYMENT_CONFIG_PATH = path.resolve(__dirname, '../deployment/app-config.json');
 const BACKEND_PORT = '3001';
 const PEER_PORT = '9000';
 const SHUTDOWN_MESSAGE = 'discord-clone:shutdown';
@@ -74,21 +75,131 @@ const BACKEND_PLATFORM_ENV_KEYS = Object.freeze([
   'TZ',
 ]);
 
-const PRODUCTION_CSP = [
+function requireCleanUrl(value, label, { secureOnly = false } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ''));
+  } catch (_) {
+    throw new Error(`${label} geçerli bir URL değil.`);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${label} kullanıcı bilgisi, sorgu veya parça içeremez.`);
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') {
+    throw new Error(`${label} yalnızca origin içermeli; yol eklenmemeli.`);
+  }
+  if (secureOnly && parsed.protocol !== 'https:') {
+    throw new Error(`${label} uzak modda https:// ile başlamalı.`);
+  }
+  if (!secureOnly && !['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${label} http:// veya https:// ile başlamalı.`);
+  }
+  return parsed.origin;
+}
+
+function loadDeploymentConfig() {
+  let source;
+  try {
+    source = JSON.parse(fs.readFileSync(DEPLOYMENT_CONFIG_PATH, 'utf8'));
+  } catch (error) {
+    throw new Error(`Dağıtım yapılandırması okunamadı: ${error.message}`);
+  }
+
+  const mode = String(source?.mode || '').trim().toLowerCase();
+  if (!['local', 'remote'].includes(mode)) {
+    throw new Error('deployment/app-config.json içindeki mode local veya remote olmalı.');
+  }
+
+  if (mode === 'local') {
+    return Object.freeze({
+      mode,
+      apiOrigin: `http://127.0.0.1:${BACKEND_PORT}`,
+      socketUrl: `http://127.0.0.1:${BACKEND_PORT}`,
+      peerHost: '127.0.0.1',
+      peerPort: Number(PEER_PORT),
+      peerPath: '/peerjs',
+      peerSecure: false,
+      startsBundledBackend: true,
+    });
+  }
+
+  const apiOrigin = requireCleanUrl(source.apiOrigin, 'apiOrigin', { secureOnly: true });
+  const socketUrl = requireCleanUrl(source.socketUrl || source.apiOrigin, 'socketUrl', { secureOnly: true });
+  const peerHost = String(source.peerHost || '').trim().toLowerCase();
+  if (!peerHost || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(peerHost)) {
+    throw new Error('peerHost yalnızca geçerli bir alan adı olmalı.');
+  }
+  const peerPort = Number(source.peerPort ?? 443);
+  if (!Number.isInteger(peerPort) || peerPort < 1 || peerPort > 65535) {
+    throw new Error('peerPort 1 ile 65535 arasında olmalı.');
+  }
+  const peerPath = String(source.peerPath || '/peerjs').trim();
+  if (!/^\/[A-Za-z0-9/_-]*$/.test(peerPath) || peerPath.includes('..')) {
+    throw new Error('peerPath / ile başlayan güvenli bir yol olmalı.');
+  }
+  if (source.peerSecure !== true) {
+    throw new Error('Uzak modda peerSecure true olmalı.');
+  }
+
+  return Object.freeze({
+    mode,
+    apiOrigin,
+    socketUrl,
+    peerHost,
+    peerPort,
+    peerPath,
+    peerSecure: true,
+    startsBundledBackend: false,
+  });
+}
+
+const DEPLOYMENT_CONFIG = loadDeploymentConfig();
+const RENDERER_RUNTIME_CONFIG = Object.freeze({
+  mode: DEPLOYMENT_CONFIG.mode,
+  apiOrigin: DEPLOYMENT_CONFIG.apiOrigin,
+  apiUrl: `${DEPLOYMENT_CONFIG.apiOrigin}/api`,
+  socketUrl: DEPLOYMENT_CONFIG.socketUrl,
+  peerHost: DEPLOYMENT_CONFIG.peerHost,
+  peerPort: DEPLOYMENT_CONFIG.peerPort,
+  peerPath: DEPLOYMENT_CONFIG.peerPath,
+  peerSecure: DEPLOYMENT_CONFIG.peerSecure,
+});
+
+function websocketOrigin(httpOrigin) {
+  const parsed = new URL(httpOrigin);
+  parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+  return parsed.origin;
+}
+
+function buildProductionCsp() {
+  const peerHttpOrigin = `${DEPLOYMENT_CONFIG.peerSecure ? 'https' : 'http'}://${DEPLOYMENT_CONFIG.peerHost}:${DEPLOYMENT_CONFIG.peerPort}`;
+  const connectSources = new Set([
+    "'self'",
+    DEPLOYMENT_CONFIG.apiOrigin,
+    DEPLOYMENT_CONFIG.socketUrl,
+    websocketOrigin(DEPLOYMENT_CONFIG.socketUrl),
+    peerHttpOrigin,
+    websocketOrigin(peerHttpOrigin),
+  ]);
+
+  return [
   "default-src 'none'",
   "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https: http://127.0.0.1:3001 http://localhost:3001",
-  "media-src 'self' blob: https: http://127.0.0.1:3001 http://localhost:3001",
+  `img-src 'self' data: blob: https: ${DEPLOYMENT_CONFIG.apiOrigin}`,
+  `media-src 'self' blob: https: ${DEPLOYMENT_CONFIG.apiOrigin}`,
   "font-src 'self' data:",
-  "connect-src 'self' http://127.0.0.1:3001 http://localhost:3001 ws://127.0.0.1:3001 ws://localhost:3001 http://127.0.0.1:9000 http://localhost:9000 ws://127.0.0.1:9000 ws://localhost:9000",
+  `connect-src ${[...connectSources].join(' ')}`,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'self'",
   "frame-src 'none'",
-].join('; ');
+  ].join('; ');
+}
+
+const PRODUCTION_CSP = buildProductionCsp();
 
 // This must run before app.ready. The custom standard/secure protocol avoids
 // granting the renderer the broad privileges of file:// pages.
@@ -397,7 +508,7 @@ function createBackendEnvironment(runtimeEnvFile, dataEncryptionKey, allowPlaint
 }
 
 async function startPackagedBackend() {
-  if (isDev || backendProcess) return;
+  if (isDev || backendProcess || !DEPLOYMENT_CONFIG.startsBundledBackend) return;
 
   const backendRoot = path.join(process.resourcesPath, 'backend');
   const backendEntry = path.join(backendRoot, 'src', 'server.js');
@@ -458,7 +569,7 @@ async function startPackagedBackend() {
 }
 
 async function waitForPackagedBackend(timeoutMs = 8_000) {
-  if (isDev) return true;
+  if (isDev || !DEPLOYMENT_CONFIG.startsBundledBackend) return true;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline && backendProcess) {
@@ -726,6 +837,14 @@ if (!ownsSingleInstance) {
       mainWindow.focus();
     });
   }
+
+  ipcMain.on('runtime-config:get', event => {
+    event.returnValue = null;
+    const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || '';
+    if (event.senderFrame && event.senderFrame !== event.sender.mainFrame) return;
+    if (!isTrustedRendererOrigin(senderUrl)) return;
+    event.returnValue = RENDERER_RUNTIME_CONFIG;
+  });
 
   app.whenReady().then(async () => {
     if (!isDev) registerProductionProtocol();

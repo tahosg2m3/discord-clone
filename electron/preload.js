@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const runtimeConfig = ipcRenderer.sendSync('runtime-config:get');
+const safeRuntimeConfig = runtimeConfig && typeof runtimeConfig === 'object'
+  ? Object.freeze({ ...runtimeConfig })
+  : Object.freeze({});
+
+contextBridge.exposeInMainWorld('tahosappRuntime', safeRuntimeConfig);
+
 contextBridge.exposeInMainWorld('electron', {
   getAppPath: () => ipcRenderer.invoke('get-app-path'),
   platform: process.platform,

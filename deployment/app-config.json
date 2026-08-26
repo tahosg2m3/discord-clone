@@ -1,0 +1,9 @@
+{
+  "mode": "remote",
+  "apiOrigin": "https://api.tahosapp.com.tr",
+  "socketUrl": "https://api.tahosapp.com.tr",
+  "peerHost": "voice.tahosapp.com.tr",
+  "peerPort": 443,
+  "peerPath": "/peerjs",
+  "peerSecure": true
+}

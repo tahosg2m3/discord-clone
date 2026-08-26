@@ -1,4 +1,4 @@
-const API_ROOT = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_URL as API_ROOT } from '../config/runtimeConfig';
 
 async function platformRequest(path, options = {}) {
   const token = localStorage.getItem('chat_token');
