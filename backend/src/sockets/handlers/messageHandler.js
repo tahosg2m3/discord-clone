@@ -1,23 +1,13 @@
-const { messageService } = require('../../services/messageService');
+const {
+  MAX_MESSAGE_LENGTH,
+  messageService,
+  normalizeAttachments,
+  normalizeVoiceMessage,
+} = require('../../services/messageService');
 const { messageModerationService } = require('../../services/messageModerationService');
 const { platformService } = require('../../services/platformService');
 const storage = require('../../storage/inMemory');
 const { emitAudit, emitToChannelViewers } = require('../authorizedEmit');
-
-function safeVoiceMessage(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const url = typeof value.url === 'string' ? value.url.trim().slice(0, 2048) : '';
-  const isSafeUrl = /^\/uploads\/[A-Za-z0-9._-]+$/.test(url) || /^https?:\/\//i.test(url);
-  const durationMs = Number(value.durationMs);
-  if (!isSafeUrl || !Number.isFinite(durationMs) || durationMs < 100 || durationMs > 600_000) return null;
-  const waveform = Array.isArray(value.waveform)
-    ? value.waveform.slice(0, 256).map(point => Math.min(1, Math.max(0, Number(point) || 0)))
-    : [];
-  const mimeType = /^audio\/[a-z0-9.+-]+$/i.test(String(value.mimeType || ''))
-    ? String(value.mimeType).slice(0, 100)
-    : 'audio/webm';
-  return { url, durationMs: Math.round(durationMs), waveform, mimeType };
-}
 
 function getChannelAccess(channelId, userId, permission = 'VIEW_CHANNEL') {
   const channel = storage.getChannelById(channelId);
@@ -283,10 +273,21 @@ exports.handleSend = async (io, socket, data = {}) => {
     const authenticatedUser = finalUserId ? storage.getUserById(finalUserId) : null;
     const finalUsername = authenticatedUser?.username;
     const cleanContent = String(content || '').trim();
-    const safeAttachments = Array.isArray(attachments)
-      ? attachments.slice(0, 10).filter(file => file && typeof file.url === 'string')
-      : [];
-    const voiceMessage = safeVoiceMessage(data.voiceMessage);
+    const safeAttachments = normalizeAttachments(attachments);
+    const voiceMessage = normalizeVoiceMessage(data.voiceMessage);
+
+    if (cleanContent.length > MAX_MESSAGE_LENGTH) {
+      socket.emit('message:error', {
+        message: `Mesaj en fazla ${MAX_MESSAGE_LENGTH} karakter olabilir.`,
+        code: 'MESSAGE_TOO_LONG',
+      });
+      return;
+    }
+
+    if (Array.isArray(attachments) && attachments.length > 0 && safeAttachments.length === 0) {
+      socket.emit('message:error', { message: 'Ek dosya bağlantısı geçersiz.', code: 'INVALID_ATTACHMENT' });
+      return;
+    }
 
     if (data.voiceMessage != null && !voiceMessage) {
       socket.emit('message:error', {
@@ -331,13 +332,19 @@ exports.handleSend = async (io, socket, data = {}) => {
       return;
     }
 
+    const originalReply = replyTo?.id ? findMessage(channelId, String(replyTo.id)) : null;
+    const safeReply = originalReply ? {
+      id: originalReply.id,
+      username: originalReply.username,
+      content: String(originalReply.content || '').slice(0, 500),
+    } : null;
     const message = await messageService.createMessage({
       username: finalUsername,
       userId: finalUserId,
       content: cleanContent,
       channelId,
       attachments: safeAttachments,
-      replyTo,
+      replyTo: safeReply,
       voiceMessage,
     });
 
@@ -382,6 +389,13 @@ exports.handleEdit = (io, socket, data = {}) => {
     const { messageId, content, channelId } = data;
     const userId = socket.userData?.userId;
     const cleanContent = String(content || '').trim();
+    if (cleanContent.length > MAX_MESSAGE_LENGTH) {
+      socket.emit('message:error', {
+        message: `Mesaj en fazla ${MAX_MESSAGE_LENGTH} karakter olabilir.`,
+        code: 'MESSAGE_TOO_LONG',
+      });
+      return;
+    }
     const access = getChannelAccess(channelId, userId, 'SEND_MESSAGES');
     const originalMessage = findMessage(channelId, messageId);
     if (!access.allowed) {

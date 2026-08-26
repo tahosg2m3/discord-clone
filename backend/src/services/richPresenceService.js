@@ -39,7 +39,11 @@ function safeImageUrl(value) {
   if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(candidate)) return candidate;
   try {
     const parsed = new URL(candidate);
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : null;
+    if (parsed.username || parsed.password) return null;
+    const localDevelopmentHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    return parsed.protocol === 'https:' || (parsed.protocol === 'http:' && localDevelopmentHost)
+      ? parsed.href
+      : null;
   } catch (_) {
     return null;
   }
@@ -50,7 +54,7 @@ function safeActionUrl(value) {
   if (!candidate) return null;
   try {
     const parsed = new URL(candidate);
-    return parsed.protocol === 'https:' ? parsed.href : null;
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.href : null;
   } catch (_) {
     return null;
   }

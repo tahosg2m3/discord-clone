@@ -11,6 +11,7 @@ import { useServer } from '../../context/ServerContext';
 import { createReport, getMessageEditHistory } from '../../services/platformApi';
 import { registerAudioOutputTarget } from '../../services/audioOutputService';
 import { API_ORIGIN } from '../../config/runtimeConfig';
+import { resolveSafeMediaUrl } from '../../utils/safeMediaUrl';
 
 const QUICK_REACTIONS = ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F525}'];
 const COUNTRY_FLAG_PATTERN = /(\p{Regional_Indicator}{2})/gu;
@@ -35,8 +36,10 @@ function renderCountryFlagsWithTwemoji(content = '') {
 }
 
 function asAbsoluteUrl(url) {
-  if (!url || url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${API_ORIGIN}${url.startsWith('/') ? '' : '/'}${url}`;
+  const safeUrl = resolveSafeMediaUrl(url);
+  if (!safeUrl) return null;
+  if (safeUrl.startsWith('/uploads/')) return `${API_ORIGIN}${safeUrl}`;
+  return safeUrl;
 }
 
 function normalizeReactions(reactions) {
@@ -333,7 +336,7 @@ export default function Message({
                       const isAudio = attachment?.type === 'audio' || attachment?.mimetype?.startsWith('audio/');
                       return attachmentIsImage(attachment) ? (
                         <a key={`${url}-${index}`} href={url} target="_blank" rel="noopener noreferrer" className="block max-w-[min(520px,100%)] overflow-hidden rounded-xl border border-white/[0.08] bg-[#111827]">
-                          <img src={attachment.previewUrl || url} alt={label} className="max-h-[360px] max-w-full object-contain" loading="lazy" />
+                          <img src={asAbsoluteUrl(attachment.previewUrl) || url} alt={label} className="max-h-[360px] max-w-full object-contain" loading="lazy" />
                         </a>
                       ) : isAudio ? (
                         <div key={`${url}-${index}`} className="w-full max-w-md rounded-xl border border-white/[0.08] bg-[#1e293b] p-3">

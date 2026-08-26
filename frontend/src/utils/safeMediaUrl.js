@@ -26,6 +26,8 @@ export function resolveSafeMediaUrl(value, { excludeGeneratedAvatar = false } = 
   try {
     const parsed = new URL(clean);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (parsed.username || parsed.password) return null;
+    if (parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)) return null;
     if (excludeGeneratedAvatar && parsed.hostname.toLowerCase() === GENERATED_AVATAR_HOSTNAME) return null;
     return encodeDomMediaUrl(parsed.href);
   } catch {

@@ -48,6 +48,8 @@ const errorHandler = require('./middleware/errorHandler');
 const logger = require('./middleware/logger');
 
 const app = express();
+app.disable('x-powered-by');
+app.set('query parser', 'simple');
 // Production traffic is proxied by Caddy on the same machine. Trust only
 // loopback proxies so req.ip and per-client rate limits use the real client IP
 // without accepting spoofed X-Forwarded-For headers from the public internet.
@@ -73,7 +75,9 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  maxHttpBufferSize: 10e6, // 10MB for file uploads
+  // Dosyalar HTTP upload endpoint'inden gider. Socket paketleri yalnız mesaj ve
+  // sinyal verisi taşır; bu sınır bellek tüketimi saldırılarını daraltır.
+  maxHttpBufferSize: 1024 * 1024,
 });
 
 app.use(cors({
@@ -81,12 +85,52 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  });
+  next();
+});
+app.use(express.json({ limit: '1mb', strict: true }));
+app.use(express.urlencoded({ extended: false, limit: '256kb', parameterLimit: 100 }));
+app.use((req, res, next) => {
+  if (!req.body || typeof req.body !== 'object') return next();
+  const pending = [req.body];
+  let inspectedNodes = 0;
+  while (pending.length) {
+    const value = pending.pop();
+    inspectedNodes += 1;
+    if (inspectedNodes > 10_000) {
+      return res.status(413).json({ error: 'İstek yapısı izin verilenden daha karmaşık.' });
+    }
+    for (const key of Object.keys(value)) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) {
+        return res.status(400).json({ error: 'İstek güvenli olmayan bir alan adı içeriyor.' });
+      }
+      const child = value[key];
+      if (child && typeof child === 'object') pending.push(child);
+    }
+  }
+  return next();
+});
 app.use(logger);
 
 // Static files for uploads
-app.use('/uploads', express.static(uploadsDirectory));
+app.use('/uploads', express.static(uploadsDirectory, {
+  dotfiles: 'deny',
+  fallthrough: false,
+  index: false,
+  redirect: false,
+  setHeaders: (res, filePath) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Cross-Origin-Resource-Policy', 'same-site');
+    res.set('Cache-Control', 'private, max-age=31536000, immutable');
+    if (/\.(?:pdf|doc|docx|txt)$/i.test(filePath)) res.set('Content-Disposition', 'attachment');
+  },
+}));
 
 // Routes
 app.use('/api/servers', serverRoutes);
@@ -125,6 +169,11 @@ const PORT = process.env.PORT || 3001;
 const HOST = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
 let peerServerController = null;
 let isShuttingDown = false;
+
+server.requestTimeout = 30_000;
+server.headersTimeout = 15_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;
 
 server.once('error', error => {
   console.error(`HTTP server could not start: ${error.message}`);

@@ -1,6 +1,53 @@
 ﻿const { v4: uuidv4 } = require('uuid');
 const storage = require('../storage/inMemory'); // Storage'ı dahil ettik
 
+const MAX_MESSAGE_LENGTH = 4000;
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function normalizeMediaUrl(value) {
+  const raw = typeof value === 'string' ? value.trim().slice(0, 2048) : '';
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || !['https:', 'http:'].includes(url.protocol)) return null;
+    const localDevelopmentHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !localDevelopmentHost) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAttachment(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const url = normalizeMediaUrl(value.url);
+  if (!url) return null;
+  const previewUrl = normalizeMediaUrl(value.previewUrl);
+  const size = Math.min(Math.max(Number(value.size) || 0, 0), MAX_ATTACHMENT_BYTES);
+  const mimetype = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(String(value.mimetype || ''))
+    ? String(value.mimetype).slice(0, 100).toLowerCase()
+    : null;
+  const type = ['image', 'gif', 'sticker', 'audio', 'video', 'file'].includes(value.type)
+    ? value.type
+    : 'file';
+  const filename = String(value.filename || value.name || 'Dosya')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .slice(0, 255) || 'Dosya';
+  return {
+    url,
+    ...(previewUrl ? { previewUrl } : {}),
+    filename,
+    type,
+    ...(mimetype ? { mimetype } : {}),
+    ...(size ? { size } : {}),
+  };
+}
+
+function normalizeAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_ATTACHMENTS).map(normalizeAttachment).filter(Boolean);
+}
 
 // User supplied URLs are never fetched by the backend.  Networked Open Graph
 // scraping permits SSRF and DNS-rebinding attacks, so the message card below
@@ -56,7 +103,7 @@ function findFirstSafeLinkMetadata(value) {
 
 function normalizeVoiceMessage(value) {
   if (!value || typeof value !== 'object' || typeof value.url !== 'string') return null;
-  const url = value.url.trim().slice(0, 2048);
+  const url = normalizeMediaUrl(value.url);
   const durationMs = Math.min(Math.max(Number(value.durationMs) || 0, 100), 600_000);
   if (!url || !durationMs) return null;
   const waveform = Array.isArray(value.waveform)
@@ -72,18 +119,25 @@ class MessageService {
   // Constructor'da artık veri tutmuyoruz, storage kullanacağız.
 
   async createMessage({ username, content, channelId, userId, attachments = [], replyTo = null, voiceMessage = null }) {
+    const safeContent = String(content || '').trim();
+    if (safeContent.length > MAX_MESSAGE_LENGTH) {
+      const error = new Error(`Mesaj en fazla ${MAX_MESSAGE_LENGTH} karakter olabilir.`);
+      error.code = 'MESSAGE_TOO_LONG';
+      throw error;
+    }
+    const safeAttachments = normalizeAttachments(attachments);
     const safeVoiceMessage = normalizeVoiceMessage(voiceMessage);
     const message = {
       id: uuidv4(),
       username,
       userId,
-      content,
+      content: safeContent,
       channelId,
       timestamp: Date.now(),
       type: safeVoiceMessage ? 'voice' : 'user',
       isEdited: false,
       metadata: null,
-      attachments: Array.isArray(attachments) ? attachments : [],
+      attachments: safeAttachments,
       replyTo: replyTo && typeof replyTo === 'object' ? {
         id: String(replyTo.id || ''),
         username: String(replyTo.username || ''),
@@ -96,7 +150,7 @@ class MessageService {
     };
 
     // URL yerelde ayrıştırılır; backend hiçbir kullanıcı bağlantısına istek atmaz.
-    message.metadata = findFirstSafeLinkMetadata(content);
+    message.metadata = findFirstSafeLinkMetadata(safeContent);
 
     // Storage'a kaydet (Bu sayede kalıcı olur)
     storage.addChannelMessage(channelId, message);
@@ -137,11 +191,13 @@ class MessageService {
   
   // Overload: channelId parametresi eklendi
   updateMessageWithChannel(channelId, messageId, newContent, userId) {
+      const safeContent = String(newContent || '').trim();
+      if (safeContent.length > MAX_MESSAGE_LENGTH) return null;
       const msg = storage.getChannelMessages(channelId).find(m => m.id === messageId);
       if (msg) {
           if (msg.userId !== userId) return null; // Yetki kontrolü
           
-          return storage.updateChannelMessage(channelId, messageId, newContent);
+          return storage.updateChannelMessage(channelId, messageId, safeContent);
       }
       return null;
   }
@@ -178,4 +234,11 @@ service.deleteMessage = (messageId, userId) => {
     return null;
 };
 
-module.exports = { messageService: service };
+module.exports = {
+  MAX_MESSAGE_LENGTH,
+  messageService: service,
+  normalizeAttachment,
+  normalizeAttachments,
+  normalizeMediaUrl,
+  normalizeVoiceMessage,
+};

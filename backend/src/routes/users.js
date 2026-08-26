@@ -46,7 +46,9 @@ function safeActivityImage(value) {
   if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(candidate)) return candidate;
   try {
     const parsed = new URL(candidate);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+    if (parsed.username || parsed.password) return null;
+    const localDevelopmentHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && localDevelopmentHost)) return parsed.href;
   } catch (_) {
     return null;
   }

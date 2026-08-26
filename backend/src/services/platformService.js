@@ -40,6 +40,20 @@ function nullableText(value, maxLength = 500) {
   return text(value, maxLength);
 }
 
+function nullableMediaUrl(value) {
+  const raw = nullableText(value, 1000);
+  if (!raw) return null;
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || !['https:', 'http:'].includes(url.protocol)) return null;
+    if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '::1'].includes(url.hostname)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 function notificationLevel(value, fallback = 'all') {
   const normalized = value === 'none' ? 'nothing' : value;
   return NOTIFICATION_LEVELS.has(normalized) ? normalized : fallback;
@@ -1018,7 +1032,7 @@ class PlatformService {
       location: nullableText(input.location, 300),
       startsAt,
       endsAt: timestamp(input.endsAt ?? input.scheduledEndAt),
-      image: nullableText(input.image, 1000),
+      image: nullableMediaUrl(input.image),
       status: 'scheduled',
       createdBy: nullableText(input.createdBy, 128),
       createdAt: Date.now(),
@@ -1057,7 +1071,7 @@ class PlatformService {
     const nextEndsAt = updates.endsAt ?? updates.scheduledEndAt;
     if (nextStartsAt !== undefined && timestamp(nextStartsAt)) next.startsAt = timestamp(nextStartsAt);
     if (nextEndsAt !== undefined) next.endsAt = timestamp(nextEndsAt);
-    if (updates.image !== undefined) next.image = nullableText(updates.image, 1000);
+    if (updates.image !== undefined) next.image = nullableMediaUrl(updates.image);
     if (updates.type !== undefined && ['voice', 'stage', 'external'].includes(updates.type)) next.type = updates.type;
     if (updates.status !== undefined && EVENT_STATUSES.has(updates.status)) next.status = updates.status;
     if (next.endsAt && next.endsAt <= next.startsAt) return null;
@@ -1785,7 +1799,7 @@ class PlatformService {
     if (keywords !== undefined) current.keywords = stringList(keywords, { maxItems: 10, maxLength: 30 });
     if (updates.language !== undefined) current.language = text(updates.language, 10, 'tr');
     if (updates.nsfw !== undefined) current.nsfw = Boolean(updates.nsfw);
-    if (updates.banner !== undefined) current.banner = nullableText(updates.banner, 1000);
+    if (updates.banner !== undefined) current.banner = nullableMediaUrl(updates.banner);
     current.updatedAt = Date.now();
     this.save();
     return clone({ ...current, tags: current.keywords || [] });
@@ -2074,7 +2088,7 @@ class PlatformService {
       serverId: text(serverId, 128),
       channelId,
       name,
-      avatar: nullableText(input.avatar, 1000),
+      avatar: nullableMediaUrl(input.avatar),
       createdBy: nullableText(input.createdBy, 128),
       tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
       enabled: true,
@@ -2136,7 +2150,7 @@ class PlatformService {
     if (!webhook) return null;
     if (updates.name !== undefined && text(updates.name, 80)) webhook.name = text(updates.name, 80);
     if (updates.channelId !== undefined && text(updates.channelId, 128)) webhook.channelId = text(updates.channelId, 128);
-    if (updates.avatar !== undefined) webhook.avatar = nullableText(updates.avatar, 1000);
+    if (updates.avatar !== undefined) webhook.avatar = nullableMediaUrl(updates.avatar);
     if (updates.enabled !== undefined) webhook.enabled = Boolean(updates.enabled);
     webhook.updatedAt = Date.now();
     this.save();
@@ -2292,7 +2306,7 @@ class PlatformService {
   createMediaAsset(serverId, collection, input, maxNameLength) {
     const state = this.ensureServerState(serverId);
     const name = text(input.name, maxNameLength).replace(/\s+/g, '_');
-    const url = text(input.url, 1000);
+    const url = nullableMediaUrl(input.url);
     if (!state || !name || !url || state[collection].some(asset => asset.name.toLowerCase() === name.toLowerCase())) return null;
     const asset = {
       id: uuidv4(),

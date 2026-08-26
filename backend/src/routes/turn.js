@@ -7,6 +7,8 @@ const { createRateLimitOptions } = require('../middleware/rateLimit');
 
 const router = express.Router();
 const credentialsRateLimit = rateLimit(createRateLimitOptions('external', 'turn-credentials'));
+const MIN_TURN_SECRET_BYTES = 32;
+const MAX_TURN_SECRET_BYTES = 512;
 
 function normalizePort(value, fallback) {
   const port = Number(value || fallback);
@@ -20,11 +22,22 @@ function normalizeHost(value) {
   return host;
 }
 
+function createCoturnRestCredential(secret, username) {
+  // coturn's TURN REST authentication protocol requires
+  // base64(HMAC-SHA1(shared-secret, temporary-username)). SHA-1 is used only
+  // as this protocol MAC with a high-entropy secret; it is never used for
+  // password hashing, signatures or collision resistance. Replacing it with
+  // SHA-256 would make standards-compatible coturn servers reject the client.
+
+  // codeql[js/weak-cryptographic-algorithm]
+  return crypto.createHmac('sha1', secret).update(username, 'utf8').digest('base64');
+}
+
 router.get('/', credentialsRateLimit, requireAuth, (req, res) => {
-  const secret = String(process.env.TURN_SECRET || '').trim();
+  const secret = Buffer.from(String(process.env.TURN_SECRET || '').trim(), 'utf8');
   const host = normalizeHost(process.env.TURN_HOST);
 
-  if (!host || secret.length < 32) {
+  if (!host || secret.length < MIN_TURN_SECRET_BYTES || secret.length > MAX_TURN_SECRET_BYTES) {
     return res.status(503).json({
       error: 'TURN servisi henüz yapılandırılmamış.',
       code: 'TURN_NOT_CONFIGURED',
@@ -32,14 +45,14 @@ router.get('/', credentialsRateLimit, requireAuth, (req, res) => {
   }
 
   const port = normalizePort(process.env.TURN_PORT, 3478);
-  const requestedTtl = Number(process.env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
+  const requestedTtl = Number(process.env.TURN_CREDENTIAL_TTL_SECONDS || 600);
   const ttlSeconds = Number.isFinite(requestedTtl)
-    ? Math.min(Math.max(Math.trunc(requestedTtl), 300), 86400)
-    : 3600;
+    ? Math.min(Math.max(Math.trunc(requestedTtl), 300), 3600)
+    : 600;
   const expiresAtSeconds = Math.floor(Date.now() / 1000) + ttlSeconds;
   const encodedUserId = Buffer.from(String(req.user.id), 'utf8').toString('base64url').slice(0, 80);
   const username = `${expiresAtSeconds}:${encodedUserId}`;
-  const credential = crypto.createHmac('sha1', secret).update(username).digest('base64');
+  const credential = createCoturnRestCredential(secret, username);
 
   const urls = [
     `turn:${host}:${port}?transport=udp`,
@@ -51,6 +64,8 @@ router.get('/', credentialsRateLimit, requireAuth, (req, res) => {
   }
 
   res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   return res.json({
     iceServers: [
       { urls: [`stun:${host}:${port}`] },

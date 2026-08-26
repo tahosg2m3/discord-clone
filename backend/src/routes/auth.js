@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const { rateLimit } = require('express-rate-limit');
+const { ipKeyGenerator, rateLimit } = require('express-rate-limit');
 const { v4: uuidv4 } = require('uuid');
 
 const storage = require('../storage/inMemory');
@@ -65,9 +65,11 @@ function rateLimitKey(scope, kind, value) {
 }
 
 function requestRemoteAddress(req) {
-  // X-Forwarded-For istemci tarafından taklit edilebilir. Açıkça güvenilir proxy
-  // yapılandırılmadığı için yalnız gerçek TCP bağlantısının adresini kullanırız.
-  return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
+  // Express yalnız loopback reverse proxy'ye güvenecek şekilde yapılandırılır.
+  // Bu nedenle req.ip, Caddy/Cloudflare arkasındaki gerçek istemciyi verirken
+  // doğrudan internete gönderilmiş sahte X-Forwarded-For başlıklarını reddeder.
+  const address = req.ip || req.socket?.remoteAddress || 'unknown';
+  return address === 'unknown' ? address : ipKeyGenerator(address);
 }
 
 class BoundedAuthRateLimitStore {

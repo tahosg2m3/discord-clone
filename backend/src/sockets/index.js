@@ -9,6 +9,7 @@ const { userService } = require('../services/userService');
 const storage = require('../storage/inMemory');
 const { verifyAuthToken } = require('../middleware/auth');
 const { richPresenceService } = require('../services/richPresenceService');
+const { messageModerationService } = require('../services/messageModerationService');
 
 const activeUserSockets = new Map();
 
@@ -34,6 +35,46 @@ function socketToken(socket) {
     : null;
 }
 
+function socketEventLimit(eventName) {
+  if (/^(message:|dm:)/.test(eventName)) return { bucket: 'message', max: 25, windowMs: 10_000 };
+  if (/^(voice:|call:|webrtc:|screen:|camera:)/.test(eventName)) return { bucket: 'realtime-media', max: 180, windowMs: 10_000 };
+  if (/^(typing:|status:|members:|users:)/.test(eventName)) return { bucket: 'presence', max: 100, windowMs: 10_000 };
+  return { bucket: 'other', max: 120, windowMs: 10_000 };
+}
+
+function installSocketRateLimit(socket) {
+  const counters = new Map();
+  socket.use(([eventName], next) => {
+    const event = typeof eventName === 'string' ? eventName.slice(0, 100) : 'unknown';
+    const now = Date.now();
+    const limit = socketEventLimit(event);
+    const current = counters.get(limit.bucket);
+    const counter = !current || now - current.startedAt >= limit.windowMs
+      ? { startedAt: now, count: 0 }
+      : current;
+    counter.count += 1;
+    counters.set(limit.bucket, counter);
+    if (counter.count <= limit.max) return next();
+
+    const error = new Error('Çok fazla gerçek zamanlı işlem gönderildi. Lütfen kısa süre bekle.');
+    error.data = {
+      code: 'SOCKET_RATE_LIMITED',
+      retryAfterMs: Math.max(1, limit.windowMs - (now - counter.startedAt)),
+    };
+    return next(error);
+  });
+}
+
+function canViewChannel(channelId, userId) {
+  const channel = storage.getChannelById(String(channelId || ''));
+  if (!channel || !userId) return false;
+  const server = storage.getServerById(channel.serverId);
+  if (!server) return false;
+  if (server.isDM) return Array.isArray(server.dmUserIds) && server.dmUserIds.includes(userId);
+  return storage.isServerMember(server.id, userId)
+    && messageModerationService.hasChannelPermission(channel, userId, 'VIEW_CHANNEL');
+}
+
 module.exports = (io) => {
   // Socket.IO bağlantısı daha event çalışmadan gerçek JWT ile doğrulanır.
   io.use((socket, next) => {
@@ -48,6 +89,18 @@ module.exports = (io) => {
 
   io.on('connection', (socket) => {
     console.log(`✅ Client connected: ${socket.id}`);
+    installSocketRateLimit(socket);
+    socket.on('error', error => {
+      if (error?.data?.code === 'SOCKET_RATE_LIMITED') {
+        socket.emit('rate-limit:error', {
+          message: error.message,
+          code: error.data.code,
+          retryAfterMs: error.data.retryAfterMs,
+        });
+        return;
+      }
+      console.warn(`Socket packet rejected (${socket.id}): ${error?.message || 'unknown error'}`);
+    });
 
     socket.userData = {
       userId: null,
@@ -141,8 +194,13 @@ module.exports = (io) => {
     socket.on('users:get-online', ensureAuthenticated(data => statusHandler.handleGetOnlineUsers(io, socket, data)));
 
     socket.on('members:request', ensureAuthenticated(data => {
-      const members = userService.getChannelMembers(data.channelId);
-      socket.emit('members:update', { members });
+      const channelId = String(data?.channelId || '');
+      if (!canViewChannel(channelId, socket.userData.userId)) {
+        socket.emit('members:update', { channelId, members: [], error: 'Bu kanalı görüntüleme yetkin yok.' });
+        return;
+      }
+      const members = userService.getChannelMembers(channelId);
+      socket.emit('members:update', { channelId, members });
     }));
 
     socket.on('disconnect', () => {

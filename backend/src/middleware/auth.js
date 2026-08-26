@@ -9,9 +9,23 @@ const JWT_AUDIENCE = 'discord-clone-client';
 const DEVELOPMENT_FALLBACK_SECRET = 'discord-clone-development-secret-change-me-before-production';
 
 let warnedAboutFallbackSecret = false;
+let cachedJwtSecret = null;
+
+function validatedJwtSecret(value, source) {
+  const secret = String(value || '').trim();
+  const byteLength = Buffer.byteLength(secret, 'utf8');
+  if (byteLength < 32 || byteLength > 4096) {
+    throw new Error(`${source} en az 32 bayt ve en fazla 4096 bayt olmalıdır.`);
+  }
+  return secret;
+}
 
 function getJwtSecret() {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (cachedJwtSecret) return cachedJwtSecret;
+  if (process.env.JWT_SECRET) {
+    cachedJwtSecret = validatedJwtSecret(process.env.JWT_SECRET, 'JWT_SECRET');
+    return cachedJwtSecret;
+  }
 
   // Paketlenmiş Electron uygulamasında .env dağıtıma dahil edilmez. APP_DATA_DIR
   // altında bir kez üretilen gizli anahtar, uygulama güncellense bile oturumları korur.
@@ -20,13 +34,15 @@ function getJwtSecret() {
     try {
       if (fs.existsSync(secretPath)) {
         const existingSecret = fs.readFileSync(secretPath, 'utf8').trim();
-        if (existingSecret.length >= 64) return existingSecret;
+        cachedJwtSecret = validatedJwtSecret(existingSecret, 'Uygulama JWT anahtarı');
+        return cachedJwtSecret;
       }
 
       fs.mkdirSync(path.dirname(secretPath), { recursive: true });
       const generatedSecret = crypto.randomBytes(64).toString('hex');
       fs.writeFileSync(secretPath, generatedSecret, { encoding: 'utf8', mode: 0o600 });
-      return generatedSecret;
+      cachedJwtSecret = generatedSecret;
+      return cachedJwtSecret;
     } catch (error) {
       throw new Error('JWT_SECRET okunamadı ve uygulama veri klasöründe güvenli bir anahtar oluşturulamadı.');
     }
@@ -41,7 +57,8 @@ function getJwtSecret() {
     console.warn('JWT_SECRET tanımlı değil. Production ortamında güçlü ve gizli bir JWT_SECRET ekleyin.');
   }
 
-  return DEVELOPMENT_FALLBACK_SECRET;
+  cachedJwtSecret = DEVELOPMENT_FALLBACK_SECRET;
+  return cachedJwtSecret;
 }
 
 function signAuthToken(user) {

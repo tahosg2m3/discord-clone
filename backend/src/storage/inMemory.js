@@ -84,7 +84,9 @@ function sanitizeMediaUrl(value, field) {
   if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(clean)) return clean;
   try {
     const parsed = new URL(clean);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+    if (parsed.username || parsed.password) throw new Error('credentials are not allowed');
+    const localDevelopmentHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && localDevelopmentHost)) return parsed.href;
   } catch (_) {
     // Aşağıdaki ortak doğrulama hatası döndürülür.
   }
