@@ -8,16 +8,24 @@ function normalizePort(value, fallback) {
 }
 
 function createPeerCorsOrigin() {
-  const configuredOrigins = String(process.env.CLIENT_URL || 'http://localhost:5173')
+  const configuredOrigins = new Set(String(process.env.CLIENT_URL || 'http://localhost:5173')
     .split(',')
     .map(value => value.trim())
-    .filter(Boolean);
+    .filter(Boolean));
+  configuredOrigins.add('discord-clone://app');
 
   return (origin, callback) => {
     // Non-browser health checks have no Origin header. Browser clients must
     // come from an explicitly configured renderer origin.
-    if (!origin || configuredOrigins.includes(origin)) callback(null, true);
-    else callback(new Error('PeerJS origin is not allowed.'));
+    if (!origin || configuredOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    const error = new Error('PeerJS origin is not allowed.');
+    error.status = 403;
+    error.code = 'PEER_CORS_ORIGIN_DENIED';
+    callback(error);
   };
 }
 

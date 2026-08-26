@@ -55,15 +55,24 @@ app.set('query parser', 'simple');
 // without accepting spoofed X-Forwarded-For headers from the public internet.
 app.set('trust proxy', 'loopback');
 const server = http.createServer(app);
-const configuredClientOrigins = String(process.env.CLIENT_URL || 'http://localhost:5173')
+const DESKTOP_CLIENT_ORIGIN = 'discord-clone://app';
+const configuredClientOrigins = new Set(String(process.env.CLIENT_URL || 'http://localhost:5173')
   .split(',')
   .map(value => value.trim())
-  .filter(Boolean);
+  .filter(Boolean));
+configuredClientOrigins.add(DESKTOP_CLIENT_ORIGIN);
 const allowConfiguredClientOrigin = (origin, callback) => {
   // Health checks and native/non-browser clients may omit Origin. Browser and
   // Electron renderer requests must match the explicit allowlist exactly.
-  if (!origin || configuredClientOrigins.includes(origin)) callback(null, true);
-  else callback(new Error('Client origin is not allowed.'));
+  if (!origin || configuredClientOrigins.has(origin)) {
+    callback(null, true);
+    return;
+  }
+
+  const error = new Error('Client origin is not allowed.');
+  error.status = 403;
+  error.code = 'CORS_ORIGIN_DENIED';
+  callback(error);
 };
 const uploadsDirectory = process.env.APP_DATA_DIR
   ? path.join(path.resolve(process.env.APP_DATA_DIR), 'uploads')
@@ -245,7 +254,7 @@ async function startServices() {
     if (isShuttingDown) return;
     console.log(`🚀 Server running on http://${HOST}:${PORT}`);
     console.log('📡 WebSocket server ready');
-    console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+    console.log(`🌐 CORS enabled for ${Array.from(configuredClientOrigins).join(', ')}`);
 
     peerServerController = startPeerServer();
   });
