@@ -1,6 +1,6 @@
 {
   "name": "tahosapp",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Tahosapp desktop communication application",
   "author": "tahosg2m3",
   "main": "electron/main.js",
@@ -15,6 +15,8 @@
     "build": "npm run build:frontend:desktop && npm run build:electron",
     "deploy:production": "powershell -NoProfile -ExecutionPolicy Bypass -File deployment/deploy.ps1",
     "publish:production": "powershell -NoProfile -ExecutionPolicy Bypass -File deployment/publish.ps1",
+    "release:production": "npm run build && npm run publish:production",
+    "smtp:production": "powershell -NoProfile -ExecutionPolicy Bypass -File deployment/update-smtp.ps1",
     "postinstall": "cd backend && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -39,8 +41,17 @@
       "frontend/dist/**/*",
       "THIRD_PARTY_NOTICES.md"
     ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://tahosapp.com.tr/updates/windows/",
+        "channel": "latest"
+      }
+    ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "installer/tahosapp.ico"
     },
     "nsis": {
@@ -52,7 +63,10 @@
       "createStartMenuShortcut": true,
       "shortcutName": "tahosapp",
       "runAfterFinish": true,
-      "installerLanguages": ["tr_TR", "en_US"],
+      "installerLanguages": [
+        "tr_TR",
+        "en_US"
+      ],
       "license": "installer/license_tr.txt",
       "include": "installer/installer.nsh",
       "installerIcon": "installer/tahosapp.ico",
@@ -61,7 +75,9 @@
       "uninstallDisplayName": "tahosapp ${version}"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.social-networking",
       "hardenedRuntime": true,
       "darkModeSupport": true,
@@ -75,15 +91,21 @@
       }
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Network"
     }
   },
   "devDependencies": {
+    "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
     "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
-    "concurrently": "^10.0.4",
-    "wait-on": "^9.1.0",
-    "cross-env": "^10.1.0"
+    "wait-on": "^9.1.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

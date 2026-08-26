@@ -6,6 +6,7 @@ import {
   Bell,
   Check,
   Copy,
+  Download,
   Globe2,
   Headphones,
   KeyRound,
@@ -77,6 +78,7 @@ const SETTING_GROUPS = [
       { id: 'appearance', label: 'Görünüm', icon: Palette, description: 'Uygulama temasını seç' },
       { id: 'accessibility', label: 'Erişilebilirlik', icon: Settings, description: 'Okunabilirlik ve hareket seçenekleri' },
       { id: 'language', label: 'Dil', icon: Globe2, description: 'Uygulama dilini seç' },
+      { id: 'updates', label: 'Güncellemeler', icon: Download, description: 'Masaüstü sürümünü güncel tut' },
     ],
   },
 ];
@@ -208,6 +210,17 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
   const [richPresenceState, setRichPresenceState] = useState({ enabled: true, token: { exists: false }, activities: [] });
   const [generatedPresenceToken, setGeneratedPresenceToken] = useState('');
   const [presenceBusy, setPresenceBusy] = useState('');
+  const [desktopUpdateState, setDesktopUpdateState] = useState({
+    supported: false,
+    status: 'disabled',
+    currentVersion: '',
+    availableVersion: null,
+    progress: null,
+    automaticChecks: true,
+    lastCheckedAt: null,
+    message: 'Güncelleme bilgisi yükleniyor…',
+  });
+  const [desktopUpdateBusy, setDesktopUpdateBusy] = useState(false);
   const [testPresence, setTestPresence] = useState({
     name: 'Örnek Oyun',
     type: 'playing',
@@ -257,6 +270,13 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     socket.on('rich-presence:update', handleRichPresence);
     return () => socket.off('rich-presence:update', handleRichPresence);
   }, [socket, user?.id]);
+
+  useEffect(() => {
+    const bridge = globalThis.electron?.desktopUpdater;
+    if (!bridge) return undefined;
+    bridge.getState().then(setDesktopUpdateState).catch(() => {});
+    return bridge.onState(setDesktopUpdateState);
+  }, []);
 
   const handleUnblock = async targetUserId => {
     try {
@@ -518,6 +538,40 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     setNewEmail(user.email || '');
   };
 
+  const handleDesktopUpdateCheck = async () => {
+    const bridge = globalThis.electron?.desktopUpdater;
+    if (!bridge) return;
+    setDesktopUpdateBusy(true);
+    try {
+      setDesktopUpdateState(await bridge.check());
+    } catch (_) {
+      toast.error('Güncelleme denetimi başlatılamadı.');
+    } finally {
+      setDesktopUpdateBusy(false);
+    }
+  };
+
+  const handleAutomaticUpdateChange = async enabled => {
+    const bridge = globalThis.electron?.desktopUpdater;
+    if (!bridge) return;
+    setDesktopUpdateBusy(true);
+    try {
+      setDesktopUpdateState(await bridge.setAutomaticChecks(enabled));
+      toast.success(enabled ? 'Otomatik güncelleme denetimi açıldı.' : 'Otomatik güncelleme denetimi kapatıldı.');
+    } catch (_) {
+      toast.error('Güncelleme tercihi kaydedilemedi.');
+    } finally {
+      setDesktopUpdateBusy(false);
+    }
+  };
+
+  const installDesktopUpdate = async () => {
+    const bridge = globalThis.electron?.desktopUpdater;
+    if (!bridge) return;
+    const result = await bridge.install().catch(() => ({ started: false }));
+    if (!result?.started) toast.error('İndirilen güncelleme henüz hazır değil.');
+  };
+
   const renderAccount = () => (
     <div className="space-y-5">
       <section className="relative mt-12 overflow-visible rounded-xl border border-white/[0.07] bg-[#2B2D31]">
@@ -777,7 +831,75 @@ export default function UserSettingsModal({ onClose, initialTab = 'account' }) {
     </SettingsSection>
   );
 
-  const tabContent = { account: renderAccount, profile: renderProfile, 'rich-presence': renderRichPresence, privacy: renderPrivacy, voice: renderVoice, notifications: renderNotifications, appearance: renderAppearance, accessibility: renderAccessibility, language: renderLanguage };
+  const renderUpdates = () => {
+    const statusLabels = {
+      disabled: 'Kullanılamıyor',
+      idle: 'Hazır',
+      checking: 'Denetleniyor',
+      available: 'Yeni sürüm bulundu',
+      downloading: 'İndiriliyor',
+      downloaded: 'Yüklemeye hazır',
+      installing: 'Yükleniyor',
+      'up-to-date': 'Güncel',
+      error: 'Bağlantı hatası',
+    };
+    const lastChecked = desktopUpdateState.lastCheckedAt
+      ? new Date(desktopUpdateState.lastCheckedAt).toLocaleString('tr-TR')
+      : 'Henüz denetlenmedi';
+    const busy = desktopUpdateBusy || ['checking', 'available', 'downloading', 'installing'].includes(desktopUpdateState.status);
+
+    return (
+      <div className="space-y-5">
+        <SettingsSection icon={Download} title="Masaüstü Güncellemeleri" description="Yeni sürümler şifreli bağlantı üzerinden indirilir ve paket bütünlüğü yüklemeden önce doğrulanır.">
+          {!desktopUpdateState.supported ? (
+            <div className="rounded-lg border border-[#F0B232]/25 bg-[#F0B232]/10 p-4 text-sm leading-6 text-[#f8d58b]">
+              Bu ekran yalnızca Windows'a kurulmuş tahosapp uygulamasında çalışır. Tarayıcı sürümü sunucu güncellendiğinde zaten otomatik yenilenir.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <ToggleRow disabled={desktopUpdateBusy} checked={desktopUpdateState.automaticChecks !== false} onChange={handleAutomaticUpdateChange} label="Güncellemeleri otomatik denetle ve indir" description="Uygulama açıldıktan sonra ve her 30 dakikada bir yeni sürümü denetler. İndirilen sürüm uygulama kapatıldığında otomatik yüklenir." />
+
+              <div className="rounded-xl border border-white/[0.06] bg-[#1E1F22] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-[#F2F3F5]">{statusLabels[desktopUpdateState.status] || desktopUpdateState.status}</p>
+                    <p className="mt-1 text-xs leading-5 text-[#949BA4]">{desktopUpdateState.message}</p>
+                  </div>
+                  <span className="rounded-full bg-[#5865F2]/15 px-3 py-1 text-xs font-bold text-[#aab4ff]">v{desktopUpdateState.currentVersion || '—'}</span>
+                </div>
+
+                {typeof desktopUpdateState.progress === 'number' && (
+                  <div className="mt-4">
+                    <div className="mb-1 flex justify-between text-[11px] text-[#949BA4]"><span>İndirme</span><span>%{Math.round(desktopUpdateState.progress)}</span></div>
+                    <div className="h-2 overflow-hidden rounded-full bg-[#111214]"><div className="h-full rounded-full bg-[#5865F2] transition-all" style={{ width: `${Math.max(0, Math.min(100, desktopUpdateState.progress))}%` }} /></div>
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-2 text-xs text-[#949BA4] sm:grid-cols-2">
+                  <span>Son denetim: <strong className="text-[#DBDEE1]">{lastChecked}</strong></span>
+                  <span>Bulunan sürüm: <strong className="text-[#DBDEE1]">{desktopUpdateState.availableVersion ? `v${desktopUpdateState.availableVersion}` : '—'}</strong></span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={handleDesktopUpdateCheck} disabled={busy} className="flex items-center gap-2 rounded-md bg-[#4E5058] px-4 py-2 text-sm font-semibold text-white hover:bg-[#6D6F78] disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className={'h-4 w-4 ' + (desktopUpdateState.status === 'checking' ? 'animate-spin' : '')} /> Güncellemeleri denetle</button>
+                {desktopUpdateState.status === 'downloaded' && <button type="button" onClick={installDesktopUpdate} className="flex items-center gap-2 rounded-md bg-[#23A559] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1a8f4b]"><Download className="h-4 w-4" /> Yeniden başlat ve yükle</button>}
+              </div>
+            </div>
+          )}
+        </SettingsSection>
+        <SettingsSection title="Güncelleme Davranışı" description="Web ve masaüstü sürümlerinin nasıl güncellendiğini açıklar.">
+          <ul className="space-y-2 text-sm leading-6 text-[#B5BAC1]">
+            <li>• Web uygulaması sunucuya yeni sürüm gönderildiğinde sonraki açılışta güncellenir.</li>
+            <li>• Masaüstü uygulaması yeni paketi arka planda indirir ve kapanışta yükler.</li>
+            <li>• Sesli görüşmedeyken uygulama kendiliğinden kapanmaz; yeniden başlatma zamanını sen seçersin.</li>
+          </ul>
+        </SettingsSection>
+      </div>
+    );
+  };
+
+  const tabContent = { account: renderAccount, profile: renderProfile, 'rich-presence': renderRichPresence, privacy: renderPrivacy, voice: renderVoice, notifications: renderNotifications, appearance: renderAppearance, accessibility: renderAccessibility, language: renderLanguage, updates: renderUpdates };
 
   return createPortal(
     <div className="fixed inset-0 z-[99999] bg-[#313338] text-[#DBDEE1]">

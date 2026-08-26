@@ -136,6 +136,9 @@ export default function ChannelList({ onNavigate }) {
   useEffect(() => {
     if (!socket || !currentServer?.id) return undefined;
 
+    const requestCurrentVoiceSnapshot = () => {
+      requestVoiceChannelMembers(currentServer.id);
+    };
     const handleChannelsChanged = ({ serverId }) => {
       if (serverId === currentServer.id) loadChannels();
     };
@@ -145,9 +148,16 @@ export default function ChannelList({ onNavigate }) {
       getServerRoles(currentServer.id).then((payload) => setPermissionMap(permissionsToMap(payload?.currentUserPermissions || payload?.permissions || []))).catch(() => {});
     };
 
+    // On a full refresh currentServer can be restored before Socket.IO has
+    // authenticated. The first request is then intentionally ignored by the
+    // backend. Request the snapshot again after presence:ready so users who
+    // were already in voice are visible without another F5.
+    socket.on('presence:ready', requestCurrentVoiceSnapshot);
     socket.on('channels:changed', handleChannelsChanged);
     socket.on('server:members-changed', handleMembersChanged);
+    if (socket.connected) requestCurrentVoiceSnapshot();
     return () => {
+      socket.off('presence:ready', requestCurrentVoiceSnapshot);
       socket.off('channels:changed', handleChannelsChanged);
       socket.off('server:members-changed', handleMembersChanged);
     };

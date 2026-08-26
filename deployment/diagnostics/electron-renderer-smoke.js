@@ -1,7 +1,7 @@
 const WebSocket = require('ws');
 
 const port = Number(process.argv[2] || 9335);
-const includeDevices = process.argv[3] !== '--skip-devices';
+const includeDevices = !process.argv.slice(3).includes('--skip-devices');
 
 async function main() {
   const targets = await fetch(`http://127.0.0.1:${port}/json`).then(response => response.json());
@@ -38,7 +38,7 @@ async function main() {
         apiOrigin: runtime.apiOrigin || '',
         mode: runtime.mode || '',
       };
-      if (${JSON.stringify(includeDevices)}) try {
+      try {
         const response = await fetch((runtime.apiOrigin || 'https://api.tahosapp.com.tr') + '/health');
         result.fetchStatus = response.status;
         result.fetchBody = await response.text();
@@ -46,6 +46,13 @@ async function main() {
         result.fetchError = error && (error.stack || error.message || String(error));
       }
       try {
+        if (globalThis.electron?.desktopUpdater) {
+          result.desktopUpdate = await globalThis.electron.desktopUpdater.getState();
+        }
+      } catch (error) {
+        result.desktopUpdateError = error && (error.stack || error.message || String(error));
+      }
+      if (${JSON.stringify(includeDevices)}) try {
         const before = await navigator.mediaDevices.enumerateDevices();
         result.devicesBeforePermission = before.map(device => ({ kind: device.kind, label: device.label, id: device.deviceId }));
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });

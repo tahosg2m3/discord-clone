@@ -5,7 +5,12 @@ async function platformRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_ROOT}${path}`, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(`${API_ROOT}${path}`, { ...options, headers });
+  } catch (_) {
+    throw new Error('Sunucuya bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.');
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error || payload.message || 'İstek tamamlanamadı.');

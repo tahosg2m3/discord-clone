@@ -202,6 +202,7 @@ class InMemoryStorage {
       notificationPreferences: {},
       templates: [],
       backups: [],
+      uninstallFeedback: { total: 0, reasons: {}, versions: {}, lastReceivedAt: null },
     };
     this.saveTimeout = null;
     this.isClosed = false;
@@ -245,7 +246,12 @@ class InMemoryStorage {
           notificationPreferences: {},
           templates: [],
           backups: [],
+          uninstallFeedback: { total: 0, reasons: {}, versions: {}, lastReceivedAt: null },
         };
+
+      if (!this.platformState.uninstallFeedback || typeof this.platformState.uninstallFeedback !== 'object') {
+        this.platformState.uninstallFeedback = { total: 0, reasons: {}, versions: {}, lastReceivedAt: null };
+      }
 
       const userProfilesChanged = this.users.reduce((changed, user) => (
         normalizeStoredUserProfile(user) || changed
@@ -366,6 +372,28 @@ class InMemoryStorage {
     this.serverMembers.set(defaultServer.id, []);
     this.ensureServerRoleData(defaultServer.id);
     this.saveData();
+  }
+
+  recordUninstallFeedback(reason, version) {
+    const current = this.platformState.uninstallFeedback;
+    const feedback = current && typeof current === 'object'
+      ? current
+      : { total: 0, reasons: {}, versions: {}, lastReceivedAt: null };
+    feedback.reasons = feedback.reasons && typeof feedback.reasons === 'object' ? feedback.reasons : {};
+    feedback.versions = feedback.versions && typeof feedback.versions === 'object' ? feedback.versions : {};
+    feedback.total = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Number(feedback.total) || 0) + 1);
+    feedback.reasons[reason] = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(0, Number(feedback.reasons[reason]) || 0) + 1,
+    );
+    feedback.versions[version] = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(0, Number(feedback.versions[version]) || 0) + 1,
+    );
+    feedback.lastReceivedAt = Date.now();
+    this.platformState.uninstallFeedback = feedback;
+    this.saveData();
+    return { total: feedback.total };
   }
 
   migrateRoleData() {

@@ -13,6 +13,18 @@ if ($changes) {
   throw 'Once degisiklikleri git add ve git commit ile kaydetmelisin.'
 }
 
+if (-not $InstallerPath) {
+  $packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+  $candidateInstaller = Join-Path $repoRoot "release\tahosapp-Setup-$packageVersion.exe"
+  $candidateManifest = Join-Path $repoRoot 'release\latest.yml'
+  $candidateBlockmap = "$candidateInstaller.blockmap"
+  if ((Test-Path -LiteralPath $candidateInstaller -PathType Leaf)
+    -and (Test-Path -LiteralPath $candidateManifest -PathType Leaf)
+    -and (Test-Path -LiteralPath $candidateBlockmap -PathType Leaf)) {
+    $InstallerPath = $candidateInstaller
+  }
+}
+
 & git -C $repoRoot push
 if ($LASTEXITCODE -ne 0) { throw 'GitHub push basarisiz oldu; sunucu guncellenmedi.' }
 

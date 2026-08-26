@@ -39,6 +39,7 @@ const gifRoutes = require('./routes/gifs');
 const richPresenceRoutes = require('./routes/richPresence');
 const turnRoutes = require('./routes/turn');
 const platformRoutes = require('./routes/platform');
+const feedbackRoutes = require('./routes/feedback');
 const { richPresenceService } = require('./services/richPresenceService');
 
 const setupSocketHandlers = require('./sockets');
@@ -99,6 +100,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/gifs', gifRoutes);
 app.use('/api/rich-presence', richPresenceRoutes);
 app.use('/api/turn-credentials', turnRoutes);
+app.use('/api/feedback', feedbackRoutes);
 // Yeni Discord-benzeri özellikler tam API yollarını kendi router'ında tanımlar.
 // Eski endpoint'ler yukarıda kalır ve geriye dönük uyumluluğunu korur.
 app.use('/api', platformRoutes);

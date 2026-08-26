@@ -47,6 +47,12 @@ const PROFILES = Object.freeze({
     maxEntries: 10_000,
     keyType: 'ip',
   },
+  feedback: {
+    windowMs: 60 * 60 * 1000,
+    limit: 10,
+    maxEntries: 10_000,
+    keyType: 'ip',
+  },
 });
 
 /**

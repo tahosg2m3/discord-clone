@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { AutomaticPresenceDetector } = require('./automaticPresence');
+const { autoUpdater } = require('electron-updater');
 
 // Electron ana süreci için oluşturulabilecek Node tanı raporlarının ortam
 // değişkenlerini (örneğin harici DATA_ENCRYPTION_KEY) içermesine izin verme.
@@ -52,6 +53,8 @@ const PEER_PORT = '9000';
 const SHUTDOWN_MESSAGE = 'discord-clone:shutdown';
 const PROTECTED_DATA_KEY_FILE = 'data-encryption-key.safe';
 const DATA_MIGRATION_MARKER_FILE = 'data-encryption-migration.json';
+const DESKTOP_UPDATE_PREFERENCES_FILE = 'desktop-update-preferences.json';
+const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const ENCRYPTED_STATE_MAGIC = Buffer.from('discord-clone-encrypted-state', 'utf8');
 const BACKEND_PLATFORM_ENV_KEYS = Object.freeze([
   // Node/native modüllerin temel süreç ve geçici klasör ihtiyaçları. Uygulama
@@ -220,6 +223,19 @@ let backendInstanceToken;
 let isQuitting = false;
 let automaticPresenceDetector;
 let latestAutomaticPresence = [];
+let desktopUpdateCheckTimer;
+let desktopUpdateCheckPromise;
+let desktopUpdatePreferences = Object.freeze({ automaticChecks: true });
+let desktopUpdateState = Object.freeze({
+  supported: false,
+  status: 'disabled',
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  progress: null,
+  automaticChecks: true,
+  lastCheckedAt: null,
+  message: 'Otomatik güncelleme yalnızca kurulu Windows uygulamasında kullanılabilir.',
+});
 
 function parseUrl(value) {
   try {
@@ -292,6 +308,25 @@ function getRendererFile(requestUrl) {
 
 function registerProductionProtocol() {
   protocol.handle(APP_SCHEME, async request => {
+    const requestUrl = parseUrl(request.url);
+    if (requestUrl
+      && requestUrl.protocol === `${APP_SCHEME}:`
+      && requestUrl.hostname === APP_HOST
+      && !requestUrl.username
+      && !requestUrl.password
+      && !requestUrl.port
+      && requestUrl.pathname === '/runtime-config.js') {
+      const source = `Object.defineProperty(globalThis, 'tahosappRuntime', { value: Object.freeze(${JSON.stringify(RENDERER_RUNTIME_CONFIG)}), writable: false, configurable: false });`;
+      return new Response(source, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/javascript; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+
     const filePath = getRendererFile(request.url);
     if (!filePath) return new Response('Not found', { status: 404 });
 
@@ -683,6 +718,169 @@ function chooseDisplaySource(request, callback) {
   }).catch(() => callback({}));
 }
 
+function isDesktopUpdaterSupported() {
+  return !isDev
+    && app.isPackaged
+    && process.platform === 'win32'
+    && DEPLOYMENT_CONFIG.mode === 'remote';
+}
+
+function getDesktopUpdatePreferencesPath() {
+  return path.join(app.getPath('userData'), DESKTOP_UPDATE_PREFERENCES_FILE);
+}
+
+function loadDesktopUpdatePreferences() {
+  try {
+    const source = JSON.parse(fs.readFileSync(getDesktopUpdatePreferencesPath(), 'utf8'));
+    return Object.freeze({ automaticChecks: source?.automaticChecks !== false });
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('Masaüstü güncelleme tercihi okunamadı; güvenli varsayılan kullanılıyor.');
+    }
+    return Object.freeze({ automaticChecks: true });
+  }
+}
+
+async function saveDesktopUpdatePreferences(preferences) {
+  const normalized = Object.freeze({ automaticChecks: preferences?.automaticChecks !== false });
+  await writeProtectedFileAtomic(
+    getDesktopUpdatePreferencesPath(),
+    Buffer.from(`${JSON.stringify(normalized, null, 2)}\n`, 'utf8'),
+  );
+  desktopUpdatePreferences = normalized;
+  setDesktopUpdateState({ automaticChecks: normalized.automaticChecks });
+  return normalized;
+}
+
+function publicDesktopUpdateState() {
+  return {
+    supported: desktopUpdateState.supported,
+    status: desktopUpdateState.status,
+    currentVersion: desktopUpdateState.currentVersion,
+    availableVersion: desktopUpdateState.availableVersion,
+    progress: desktopUpdateState.progress,
+    automaticChecks: desktopUpdateState.automaticChecks,
+    lastCheckedAt: desktopUpdateState.lastCheckedAt,
+    message: desktopUpdateState.message,
+  };
+}
+
+function broadcastDesktopUpdateState() {
+  if (!mainWindow || mainWindow.isDestroyed() || !isTrustedTopLevelUrl(mainWindow.webContents.getURL())) return;
+  mainWindow.webContents.send('desktop-update:state', publicDesktopUpdateState());
+}
+
+function setDesktopUpdateState(patch) {
+  desktopUpdateState = Object.freeze({ ...desktopUpdateState, ...patch });
+  broadcastDesktopUpdateState();
+  return publicDesktopUpdateState();
+}
+
+function updateErrorMessage(error) {
+  const code = String(error?.code || '');
+  if (code === 'ERR_UPDATER_INVALID_RELEASE_FEED') return 'Güncelleme bilgisi geçersiz. Daha sonra tekrar dene.';
+  return 'Güncelleme sunucusuna ulaşılamadı. İnternet bağlantını kontrol edip tekrar dene.';
+}
+
+async function checkForDesktopUpdates({ manual = false } = {}) {
+  if (!isDesktopUpdaterSupported()) return publicDesktopUpdateState();
+  if (!manual && !desktopUpdatePreferences.automaticChecks) return publicDesktopUpdateState();
+  if (desktopUpdateCheckPromise) return desktopUpdateCheckPromise;
+
+  desktopUpdateCheckPromise = autoUpdater.checkForUpdates()
+    .then(() => publicDesktopUpdateState())
+    .catch(error => setDesktopUpdateState({
+      status: 'error',
+      progress: null,
+      lastCheckedAt: new Date().toISOString(),
+      message: updateErrorMessage(error),
+    }))
+    .finally(() => {
+      desktopUpdateCheckPromise = null;
+    });
+  return desktopUpdateCheckPromise;
+}
+
+function initializeDesktopUpdater() {
+  desktopUpdatePreferences = loadDesktopUpdatePreferences();
+  const supported = isDesktopUpdaterSupported();
+  desktopUpdateState = Object.freeze({
+    ...desktopUpdateState,
+    supported,
+    status: supported ? 'idle' : 'disabled',
+    automaticChecks: desktopUpdatePreferences.automaticChecks,
+    message: supported
+      ? 'Güncellemeler otomatik olarak denetlenir.'
+      : 'Otomatik güncelleme yalnızca kurulu Windows uygulamasında kullanılabilir.',
+  });
+  if (!supported) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.disableWebInstaller = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    setDesktopUpdateState({
+      status: 'checking',
+      progress: null,
+      message: 'Güncellemeler denetleniyor…',
+    });
+  });
+  autoUpdater.on('update-available', info => {
+    setDesktopUpdateState({
+      status: 'available',
+      availableVersion: String(info?.version || '').slice(0, 32) || null,
+      progress: 0,
+      lastCheckedAt: new Date().toISOString(),
+      message: 'Yeni sürüm bulundu ve güvenli biçimde indiriliyor.',
+    });
+  });
+  autoUpdater.on('update-not-available', () => {
+    setDesktopUpdateState({
+      status: 'up-to-date',
+      availableVersion: null,
+      progress: null,
+      lastCheckedAt: new Date().toISOString(),
+      message: 'tahosapp güncel.',
+    });
+  });
+  autoUpdater.on('download-progress', progress => {
+    const percent = Math.max(0, Math.min(100, Number(progress?.percent) || 0));
+    setDesktopUpdateState({
+      status: 'downloading',
+      progress: Math.round(percent * 10) / 10,
+      message: `Güncelleme indiriliyor: %${Math.round(percent)}`,
+    });
+  });
+  autoUpdater.on('update-downloaded', info => {
+    setDesktopUpdateState({
+      status: 'downloaded',
+      availableVersion: String(info?.version || '').slice(0, 32) || desktopUpdateState.availableVersion,
+      progress: 100,
+      lastCheckedAt: new Date().toISOString(),
+      message: 'Güncelleme hazır. Şimdi yeniden başlatabilir veya uygulamayı kapattığında yüklenmesini bekleyebilirsin.',
+    });
+  });
+  autoUpdater.on('error', error => {
+    setDesktopUpdateState({
+      status: 'error',
+      progress: null,
+      lastCheckedAt: new Date().toISOString(),
+      message: updateErrorMessage(error),
+    });
+  });
+
+  const initialDelay = setTimeout(() => checkForDesktopUpdates(), 8_000);
+  initialDelay.unref();
+  desktopUpdateCheckTimer = setInterval(
+    () => checkForDesktopUpdates(),
+    DESKTOP_UPDATE_CHECK_INTERVAL_MS,
+  );
+  desktopUpdateCheckTimer.unref();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -730,6 +928,10 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    broadcastDesktopUpdateState();
   });
 
   const template = [
@@ -838,14 +1040,6 @@ if (!ownsSingleInstance) {
     });
   }
 
-  ipcMain.on('runtime-config:get', event => {
-    event.returnValue = null;
-    const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || '';
-    if (event.senderFrame && event.senderFrame !== event.sender.mainFrame) return;
-    if (!isTrustedRendererOrigin(senderUrl)) return;
-    event.returnValue = RENDERER_RUNTIME_CONFIG;
-  });
-
   app.whenReady().then(async () => {
     if (!isDev) registerProductionProtocol();
     configurePermissions();
@@ -859,6 +1053,7 @@ if (!ownsSingleInstance) {
       app.quit();
       return;
     }
+    initializeDesktopUpdater();
     createWindow();
   }).catch(error => {
     console.error('Application startup failed:', error);
@@ -867,6 +1062,10 @@ if (!ownsSingleInstance) {
 
   app.on('before-quit', event => {
     stopAutomaticPresence();
+    if (desktopUpdateCheckTimer) {
+      clearInterval(desktopUpdateCheckTimer);
+      desktopUpdateCheckTimer = null;
+    }
     if (isDev || !backendProcess || isQuitting) return;
     event.preventDefault();
     isQuitting = true;
@@ -884,6 +1083,32 @@ if (!ownsSingleInstance) {
   ipcMain.handle('get-app-path', event => {
     if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return null;
     return app.getPath('userData');
+  });
+
+  ipcMain.handle('desktop-update:get-state', event => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return { supported: false, status: 'disabled' };
+    return publicDesktopUpdateState();
+  });
+
+  ipcMain.handle('desktop-update:check', event => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return { supported: false, status: 'disabled' };
+    return checkForDesktopUpdates({ manual: true });
+  });
+
+  ipcMain.handle('desktop-update:set-automatic', async (event, enabled) => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)) return { supported: false, status: 'disabled' };
+    await saveDesktopUpdatePreferences({ automaticChecks: enabled === true });
+    if (enabled === true) checkForDesktopUpdates().catch(() => {});
+    return publicDesktopUpdateState();
+  });
+
+  ipcMain.handle('desktop-update:install', event => {
+    if (!isTrustedAppFrame(event.senderFrame, event.senderFrame?.url)
+      || !isDesktopUpdaterSupported()
+      || desktopUpdateState.status !== 'downloaded') return { started: false };
+    setDesktopUpdateState({ status: 'installing', message: 'Güncelleme yükleniyor; tahosapp yeniden başlatılacak…' });
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { started: true };
   });
 
   ipcMain.handle('automatic-presence:start', event => {

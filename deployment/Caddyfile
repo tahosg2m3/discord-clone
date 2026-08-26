@@ -40,18 +40,28 @@ tahosapp.com.tr {
 	handle_path /downloads/* {
 		root * /var/www/tahosapp/downloads
 		header Content-Disposition "attachment"
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	handle_path /updates/windows/* {
+		root * /var/www/tahosapp-updates/current
+		header Cache-Control "no-store"
+		header X-Content-Type-Options "nosniff"
 		file_server
 	}
 
 	redir /app /app/ permanent
 	handle_path /app/* {
 		root * /var/www/tahosapp-web/current/app
+		header Cache-Control "no-cache, no-store, must-revalidate"
 		try_files {path} /index.html
 		file_server
 	}
 
 	handle {
 		root * /var/www/tahosapp-web/current
+		header Cache-Control "no-cache, no-store, must-revalidate"
 		file_server
 	}
 }
