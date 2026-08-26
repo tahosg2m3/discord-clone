@@ -18,9 +18,10 @@ if (-not $InstallerPath) {
   $candidateInstaller = Join-Path $repoRoot "release\tahosapp-Setup-$packageVersion.exe"
   $candidateManifest = Join-Path $repoRoot 'release\latest.yml'
   $candidateBlockmap = "$candidateInstaller.blockmap"
-  if ((Test-Path -LiteralPath $candidateInstaller -PathType Leaf)
-    -and (Test-Path -LiteralPath $candidateManifest -PathType Leaf)
-    -and (Test-Path -LiteralPath $candidateBlockmap -PathType Leaf)) {
+  $hasInstaller = Test-Path -LiteralPath $candidateInstaller -PathType Leaf
+  $hasManifest = Test-Path -LiteralPath $candidateManifest -PathType Leaf
+  $hasBlockmap = Test-Path -LiteralPath $candidateBlockmap -PathType Leaf
+  if ($hasInstaller -and $hasManifest -and $hasBlockmap) {
     $InstallerPath = $candidateInstaller
   }
 }
