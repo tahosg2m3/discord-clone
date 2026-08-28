@@ -31,6 +31,13 @@ const uploadDir = process.env.APP_DATA_DIR
   ? path.join(path.resolve(process.env.APP_DATA_DIR), 'uploads')
   : path.join(__dirname, '../../uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
+const resolvedUploadDir = path.resolve(uploadDir);
+const uploadFilenamePattern = new RegExp(
+  `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:${Object.keys(FILE_TYPES)
+    .map(extension => extension.replace('.', '\\.'))
+    .join('|')})$`,
+  'i',
+);
 const requestedStorageLimit = Number(process.env.UPLOAD_STORAGE_LIMIT_BYTES || 5 * 1024 * 1024 * 1024);
 const uploadStorageLimit = Number.isFinite(requestedStorageLimit)
   ? Math.min(Math.max(Math.trunc(requestedStorageLimit), 100 * 1024 * 1024), 100 * 1024 * 1024 * 1024)
@@ -79,10 +86,20 @@ function signatureMatches(buffer, signature) {
   }
 }
 
-function removeUploadedFile(filePath) {
-  if (!filePath) return;
+function resolveUploadedFilePath(file) {
+  const filename = String(file?.filename || '');
+  if (!uploadFilenamePattern.test(filename) || path.basename(filename) !== filename) return null;
+  const candidate = path.resolve(resolvedUploadDir, filename);
+  const relativePath = path.relative(resolvedUploadDir, candidate);
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return null;
+  return candidate;
+}
+
+function removeUploadedFile(file) {
+  const storedFilePath = resolveUploadedFilePath(file);
+  if (!storedFilePath) return;
   try {
-    fs.unlinkSync(filePath);
+    fs.unlinkSync(storedFilePath);
   } catch (_) {
     // Dosya daha önce kaldırılmışsa istemci yanıtı değişmemeli.
   }
@@ -100,8 +117,8 @@ function reserveUploadCapacity(req, res, next) {
     reservedUploadBytes = Math.max(0, reservedUploadBytes - MAX_UPLOAD_BYTES);
     if (res.statusCode < 400 && req.file?.size) {
       trackedUploadBytes += req.file.size;
-    } else if (req.file?.path) {
-      removeUploadedFile(req.file.path);
+    } else if (req.file) {
+      removeUploadedFile(req.file);
     }
   };
   res.once('finish', finalize);
@@ -112,15 +129,17 @@ function reserveUploadCapacity(req, res, next) {
 function validateUploadedFile(req, res, next) {
   if (!req.file) return res.status(400).json({ error: 'Dosya yüklenmedi.' });
   const definition = declaredFileType(req.file, req.path === '/avatar');
+  const storedFilePath = resolveUploadedFilePath(req.file);
+  if (!storedFilePath) return res.status(400).json({ error: 'Dosya yolu güvenlik kontrolünü geçemedi.' });
   let descriptor;
   try {
-    descriptor = fs.openSync(req.file.path, 'r');
+    descriptor = fs.openSync(storedFilePath, 'r');
     const header = Buffer.alloc(1024);
     const bytesRead = fs.readSync(descriptor, header, 0, header.length, 0);
     fs.closeSync(descriptor);
     descriptor = undefined;
     if (!definition || !signatureMatches(header.subarray(0, bytesRead), definition.signature)) {
-      removeUploadedFile(req.file.path);
+      removeUploadedFile(req.file);
       return res.status(415).json({ error: 'Dosyanın gerçek türü desteklenmiyor veya uzantısıyla eşleşmiyor.' });
     }
     req.verifiedUpload = definition;
@@ -129,7 +148,7 @@ function validateUploadedFile(req, res, next) {
     if (descriptor !== undefined) {
       try { fs.closeSync(descriptor); } catch (_) { /* kapanmış olabilir */ }
     }
-    removeUploadedFile(req.file.path);
+    removeUploadedFile(req.file);
     return next(error);
   }
 }

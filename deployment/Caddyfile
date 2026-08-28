@@ -15,6 +15,7 @@
 
 api.tahosapp.com.tr {
 	import common_security
+	header X-Robots-Tag "noindex, nofollow, noarchive"
 	request_body {
 		max_size 12MB
 	}
@@ -23,6 +24,7 @@ api.tahosapp.com.tr {
 
 voice.tahosapp.com.tr {
 	import common_security
+	header X-Robots-Tag "noindex, nofollow, noarchive"
 	reverse_proxy 127.0.0.1:9000
 }
 
@@ -41,6 +43,7 @@ tahosapp.com.tr {
 		root * /var/www/tahosapp/downloads
 		header Content-Disposition "attachment"
 		header Cache-Control "no-store"
+		header X-Robots-Tag "noindex, nofollow, noarchive"
 		file_server
 	}
 
@@ -48,6 +51,7 @@ tahosapp.com.tr {
 		root * /var/www/tahosapp-updates/current
 		header Cache-Control "no-store"
 		header X-Content-Type-Options "nosniff"
+		header X-Robots-Tag "noindex, nofollow, noarchive"
 		file_server
 	}
 
@@ -55,7 +59,15 @@ tahosapp.com.tr {
 	handle_path /app/* {
 		root * /var/www/tahosapp-web/current/app
 		header Cache-Control "no-cache, no-store, must-revalidate"
+		header X-Robots-Tag "noindex, nofollow, noarchive"
 		try_files {path} /index.html
+		file_server
+	}
+
+	@siteAssets path /assets/* /tahosapp.ico /site.webmanifest
+	handle @siteAssets {
+		root * /var/www/tahosapp-web/current
+		header Cache-Control "public, max-age=3600, must-revalidate"
 		file_server
 	}
 

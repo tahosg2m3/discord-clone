@@ -101,6 +101,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'frontend\dist\index.html'
 }
 
 New-Item -ItemType Directory -Path $webStage -Force | Out-Null
+$siteSource = Join-Path $repoRoot 'deployment\site'
+if (-not (Test-Path -LiteralPath (Join-Path $siteSource 'index.html') -PathType Leaf)) {
+  throw 'Tanitim sitesi kaynagi bulunamadi: deployment/site'
+}
+Get-ChildItem -LiteralPath $siteSource -Force | Copy-Item -Destination $webStage -Recurse -Force
 $packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
 if ($resolvedInstaller) {
   $expectedInstallerName = "tahosapp-Setup-$packageVersion.exe"
@@ -115,7 +120,8 @@ if ($resolvedInstaller) {
     throw 'latest.yml secilen kurulum dosyasini gostermiyor.'
   }
 }
-$landingHtml = Get-Content -LiteralPath (Join-Path $repoRoot 'deployment\site\index.html') -Raw -Encoding UTF8
+$stagedLandingPage = Join-Path $webStage 'index.html'
+$landingHtml = Get-Content -LiteralPath $stagedLandingPage -Raw -Encoding UTF8
 $middleDot = [char]0x00B7
 # Keep this expression ASCII-only. Windows PowerShell 5.1 may decode a UTF-8
 # script without a BOM using the active ANSI code page, which previously made
@@ -125,7 +131,7 @@ $landingHtml = [regex]::Replace(
   'v\d+\.\d+\.\d+\s+[^A-Za-z0-9<]+\s+Windows',
   "v$packageVersion $middleDot Windows"
 )
-[IO.File]::WriteAllText((Join-Path $webStage 'index.html'), $landingHtml, [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($stagedLandingPage, $landingHtml, [Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repoRoot 'installer\tahosapp.ico') -Destination (Join-Path $webStage 'tahosapp.ico')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'frontend\dist') -Destination (Join-Path $webStage 'app') -Recurse
 
@@ -156,11 +162,14 @@ $remote = "${remoteUser}@${remoteHost}"
 $remoteBackend = "/tmp/$(Split-Path -Leaf $backendArchive)"
 $remoteWeb = "/tmp/$(Split-Path -Leaf $webArchive)"
 $remoteScript = "/tmp/tahosapp-server-deploy-$releaseId.sh"
+$remoteCaddyFile = "/tmp/tahosapp-Caddyfile-$releaseId"
 $remoteUpdateArchive = '-'
 $remoteInstallerName = '-'
 $stagedRemoteScript = Join-Path $stageRoot "tahosapp-server-deploy-$releaseId.sh"
+$stagedCaddyFile = Join-Path $stageRoot "tahosapp-Caddyfile-$releaseId"
 Copy-Item -LiteralPath (Join-Path $repoRoot 'deployment\tahosapp-server-deploy.sh') -Destination $stagedRemoteScript
-$uploadFiles = @($backendArchive, $webArchive, $stagedRemoteScript)
+Copy-Item -LiteralPath (Join-Path $repoRoot 'deployment\Caddyfile') -Destination $stagedCaddyFile
+$uploadFiles = @($backendArchive, $webArchive, $stagedRemoteScript, $stagedCaddyFile)
 $updateParts = @()
 
 if ($resolvedInstaller) {
@@ -194,7 +203,7 @@ $remotePrepare = ''
 if ($updateParts.Count -gt 0) {
   $remotePrepare = "cat $remoteUpdateArchive.part* > $remoteUpdateArchive && "
 }
-& ssh @sshOptions $remote "${remotePrepare}sudo bash $remoteScript $releaseId $remoteBackend $remoteWeb $remoteUpdateArchive $remoteInstallerName"
+& ssh @sshOptions $remote "${remotePrepare}sudo bash $remoteScript $releaseId $remoteBackend $remoteWeb $remoteUpdateArchive $remoteInstallerName $remoteCaddyFile"
 if ($LASTEXITCODE -ne 0) { throw 'Sunucu saglik kontrolu basarisiz oldu; onceki surum korunuyor.' }
 
 Write-Host ''

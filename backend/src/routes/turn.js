@@ -23,13 +23,11 @@ function normalizeHost(value) {
 }
 
 function createCoturnRestCredential(secret, username) {
-  // coturn's TURN REST authentication protocol requires
-  // base64(HMAC-SHA1(shared-secret, temporary-username)). SHA-1 is used only
-  // as this protocol MAC with a high-entropy secret; it is never used for
-  // password hashing, signatures or collision resistance. Replacing it with
-  // SHA-256 would make standards-compatible coturn servers reject the client.
-
-  // codeql[js/weak-cryptographic-algorithm]
+  // coturn TURN REST kimlik doğrulaması
+  // base64(HMAC-SHA1(shared-secret, temporary-username)) biçimini zorunlu tutar.
+  // Buradaki SHA-1 yalnızca yüksek entropili ve süre sınırları denetlenen TURN
+  // sırrıyla HMAC üretmek içindir; parola, dosya özeti veya dijital imza için
+  // kullanılmaz. Algoritmayı değiştirmek coturn uyumluluğunu ve sesi bozar.
   return crypto.createHmac('sha1', secret).update(username, 'utf8').digest('base64');
 }
 

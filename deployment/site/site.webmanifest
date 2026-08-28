@@ -1,0 +1,14 @@
+{
+  "name": "tahosapp",
+  "short_name": "tahosapp",
+  "description": "Mesajlaşma, sesli sohbet, görüntülü görüşme, ekran paylaşımı ve topluluk platformu.",
+  "lang": "tr-TR",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "background_color": "#070914",
+  "theme_color": "#090b17",
+  "icons": [
+    { "src": "/assets/tahosapp-icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

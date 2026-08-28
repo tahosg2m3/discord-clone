@@ -6,6 +6,7 @@ backend_archive="${2:-}"
 web_archive="${3:-}"
 update_archive="${4:--}"
 installer_name="${5:--}"
+caddy_source="${6:-}"
 
 if [[ ! "$release_id" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
   echo "Gecersiz surum kimligi." >&2
@@ -18,6 +19,13 @@ for archive_path in "$backend_archive" "$web_archive"; do
     exit 2
   fi
 done
+
+if [[ "$caddy_source" != /tmp/tahosapp-Caddyfile-* || ! -f "$caddy_source" ]]; then
+  echo "Gecersiz veya eksik Caddy yapilandirmasi." >&2
+  exit 2
+fi
+
+caddy validate --config "$caddy_source" --adapter caddyfile
 
 backend_release="/opt/tahosapp/releases/$release_id"
 web_release="/var/www/tahosapp-web/releases/$release_id"
@@ -95,6 +103,16 @@ if [[ "$healthy" != true ]]; then
   fi
   systemctl restart tahosapp
   exit 6
+fi
+
+caddy_backup="/tmp/tahosapp-Caddyfile-backup-$release_id"
+cp /etc/caddy/Caddyfile "$caddy_backup"
+install -m 0644 "$caddy_source" /etc/caddy/Caddyfile
+if ! systemctl reload caddy; then
+  echo "Caddy yeni yapilandirmayi yukleyemedi; onceki dosya geri getiriliyor." >&2
+  install -m 0644 "$caddy_backup" /etc/caddy/Caddyfile
+  systemctl reload caddy
+  exit 7
 fi
 
 if [[ "$update_archive" != "-" ]]; then

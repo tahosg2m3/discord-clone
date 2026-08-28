@@ -1,73 +1,190 @@
 <!doctype html>
-<html lang="tr">
+<html lang="tr" itemscope itemtype="https://schema.org/WebPage">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="tahosapp — mesajlaşma, sesli sohbet, görüntülü görüşme ve ekran paylaşımı." />
-  <title>tahosapp — Konuş, paylaş, birlikte kal</title>
+  <title>tahosapp | Mesajlaşma, Sesli Sohbet ve Topluluk</title>
+  <meta name="description" content="tahosapp ile mesajlaş, sesli ve görüntülü konuş, ekran paylaş, arkadaşlarınla topluluklar kur. Web ve Windows için modern iletişim uygulaması." />
+  <meta name="keywords" content="tahosapp, sesli sohbet, mesajlaşma uygulaması, görüntülü görüşme, ekran paylaşımı, topluluk uygulaması, oyun sohbeti, Discord alternatifi, Türkçe sohbet uygulaması" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <meta name="theme-color" content="#090b17" />
+  <meta name="application-name" content="tahosapp" />
+  <link rel="canonical" href="https://tahosapp.com.tr/" />
+  <link rel="alternate" hreflang="tr-TR" href="https://tahosapp.com.tr/" />
+  <link rel="alternate" hreflang="x-default" href="https://tahosapp.com.tr/" />
   <link rel="icon" href="/tahosapp.ico" />
-  <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; color: #f8f7ff; background: #090b13; }
-    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 20% 15%, rgba(91, 78, 255, .24), transparent 34rem), radial-gradient(circle at 85% 75%, rgba(24, 214, 203, .14), transparent 32rem); }
-    header { position: relative; z-index: 2; width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 22px 0; display: flex; align-items: center; justify-content: space-between; }
-    .brand { display: inline-flex; align-items: center; gap: 10px; color: white; text-decoration: none; font-size: 20px; font-weight: 900; }
-    .brand img { width: 34px; height: 34px; }
-    .nav-link { color: #cbd0df; text-decoration: none; font-weight: 700; }
-    .nav-link:hover { color: white; }
-    main { position: relative; width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 54px 0 76px; }
-    .card { width: 100%; display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; padding: clamp(30px, 6vw, 72px); border: 1px solid rgba(255,255,255,.1); border-radius: 32px; background: rgba(17, 20, 34, .82); box-shadow: 0 28px 90px rgba(0,0,0,.38); backdrop-filter: blur(20px); }
-    .eyebrow { color: #8e87ff; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; font-size: 13px; }
-    h1 { margin: 14px 0 18px; font-size: clamp(46px, 8vw, 84px); line-height: .95; letter-spacing: -.055em; }
-    p { margin: 0; color: #b8bdd0; font-size: clamp(17px, 2vw, 20px); line-height: 1.65; }
-    .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
-    .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 15px 22px; border-radius: 14px; color: white; text-decoration: none; font-weight: 800; transition: .18s ease; }
-    .button.primary { background: linear-gradient(135deg, #6557ff, #7d43ff); box-shadow: 0 12px 34px rgba(101,87,255,.28); }
-    .button.secondary { border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.055); }
-    .button:hover { transform: translateY(-1px); filter: brightness(1.1); }
-    .version { color: #858ba0; font-size: 14px; }
-    .visual { min-height: 350px; display: grid; place-items: center; border-radius: 28px; background: linear-gradient(145deg, rgba(101,87,255,.22), rgba(17,20,34,.24)); border: 1px solid rgba(255,255,255,.08); }
-    .visual img { width: min(230px, 62%); aspect-ratio: 1; object-fit: contain; filter: drop-shadow(0 24px 34px rgba(44,29,144,.38)); }
-    .details { margin-top: 25px; color: #73798d; font-size: 13px; line-height: 1.6; }
-    .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 20px; }
-    .feature { padding: 20px; border: 1px solid rgba(255,255,255,.08); border-radius: 20px; background: rgba(17,20,34,.68); }
-    .feature strong { display: block; margin-bottom: 7px; font-size: 16px; }
-    .feature span { color: #9197aa; font-size: 14px; line-height: 1.5; }
-    @media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 760px) { header { padding-top: 16px; } .card { grid-template-columns: 1fr; gap: 28px; } .visual { min-height: 250px; order: -1; } .features { grid-template-columns: 1fr; } }
-  </style>
+  <link rel="apple-touch-icon" href="/assets/tahosapp-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <link rel="stylesheet" href="/assets/site.css?v=20260828-2" />
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="tr_TR" />
+  <meta property="og:site_name" content="tahosapp" />
+  <meta property="og:title" content="tahosapp — Konuş. Paylaş. Birlikte kal." />
+  <meta property="og:description" content="Mesajlaşma, sesli sohbet, görüntülü görüşme, ekran paylaşımı ve topluluk yönetimi tek uygulamada." />
+  <meta property="og:url" content="https://tahosapp.com.tr/" />
+  <meta property="og:image" content="https://tahosapp.com.tr/assets/og-tahosapp.png" />
+  <meta property="og:image:alt" content="tahosapp — Konuş. Paylaş. Birlikte kal." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="tahosapp — Konuş. Paylaş. Birlikte kal." />
+  <meta name="twitter:description" content="Modern mesajlaşma, ses, görüntü, yayın ve topluluk platformu." />
+  <meta name="twitter:image" content="https://tahosapp.com.tr/assets/og-tahosapp.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://tahosapp.com.tr/#website",
+        "url": "https://tahosapp.com.tr/",
+        "name": "tahosapp",
+        "alternateName": ["Tahosapp", "tahos app"],
+        "inLanguage": "tr-TR"
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://tahosapp.com.tr/#software",
+        "name": "tahosapp",
+        "url": "https://tahosapp.com.tr/",
+        "downloadUrl": "https://tahosapp.com.tr/downloads/tahosapp-Setup-latest.exe",
+        "applicationCategory": "CommunicationApplication",
+        "applicationSubCategory": "Mesajlaşma ve topluluk platformu",
+        "operatingSystem": "Windows 10, Windows 11, Web",
+        "softwareVersion": "1.1.2",
+        "isAccessibleForFree": true,
+        "description": "Gerçek zamanlı mesajlaşma, sesli sohbet, görüntülü görüşme, ekran paylaşımı, doğrudan arama ve topluluk yönetimi sunan iletişim uygulaması.",
+        "image": "https://tahosapp.com.tr/assets/og-tahosapp.png",
+        "featureList": [
+          "Gerçek zamanlı mesajlaşma",
+          "Sesli sohbet ve bas-konuş",
+          "RNNoise gürültü engelleme",
+          "Görüntülü görüşme ve kamera",
+          "Ekran paylaşımı ve yayın",
+          "Sunucu, kanal, rol ve izin yönetimi",
+          "Özel mesajlar ve grup konuşmaları",
+          "Rich Presence etkinlik durumu",
+          "Windows masaüstü uygulaması ve web sürümü"
+        ],
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "TRY" }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
-  <header>
-    <a class="brand" href="/"><img src="/tahosapp.ico" alt="" /> tahosapp</a>
-    <a class="nav-link" href="/app/">Giriş yap</a>
+  <a class="skip-link" href="#icerik">İçeriğe geç</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/" aria-label="tahosapp ana sayfa"><img src="/assets/tahosapp-icon.png" alt="" />tahosapp</a>
+      <nav class="site-nav" aria-label="Ana menü">
+        <a href="/ozellikler/">Özellikler</a>
+        <a href="/guvenlik/">Güvenlik</a>
+        <a href="#sss">SSS</a>
+        <a class="nav-cta" href="/app/">Giriş yap</a>
+      </nav>
+    </div>
   </header>
-  <main>
-    <section class="card">
+
+  <main id="icerik">
+    <section class="container hero">
       <div>
-        <div class="eyebrow">Bağlan • Konuş • Paylaş</div>
-        <h1>tahosapp</h1>
-        <p>Mesajlaşma, sesli sohbet, görüntülü görüşme, ekran paylaşımı ve topluluklarını tek bir yerde buluştur.</p>
+        <p class="eyebrow">Bağlan · Konuş · Paylaş</p>
+        <h1>Topluluğun için <span class="gradient">tek bir yer.</span></h1>
+        <p class="hero-copy">tahosapp; arkadaşlarını, oyun ekibini ve topluluğunu gerçek zamanlı mesajlaşma, net ses, görüntülü görüşme, ekran paylaşımı ve ayrıntılı sunucu yönetimiyle bir araya getirir.</p>
         <div class="actions">
           <a class="button primary" href="/downloads/tahosapp-Setup-latest.exe" download>Windows için indir</a>
-          <a class="button secondary" href="/app/">Tarayıcıda aç</a>
-          <span class="version">v1.1.0 · Windows 10/11 · 64-bit</span>
+          <a class="button secondary" href="/app/">Tarayıcıda kullan</a>
+          <a class="button ghost" href="/ozellikler/">Tüm özellikleri gör →</a>
         </div>
-        <div class="details">
-          Kurulum paketi henüz ticari kod imzası taşımadığı için Windows ilk açılışta güvenlik uyarısı gösterebilir.
-        </div>
+        <p class="subnote">v1.1.2 · Windows 10/11 · 64-bit · Web sürümü · Bağımsız ve ücretsiz</p>
       </div>
-      <div class="visual" aria-hidden="true">
-        <img src="/tahosapp.ico" alt="" />
+      <div class="hero-visual" aria-label="tahosapp iletişim uygulaması logosu">
+        <span class="signal one">Gerçek zamanlı bağlantı</span>
+        <img src="/assets/tahosapp-icon.png" alt="tahosapp logosu" />
+        <span class="signal two">Ses bağlantısı hazır</span>
       </div>
     </section>
-    <section class="features" aria-label="Özellikler">
-      <div class="feature"><strong>Mesajlaşma</strong><span>Kanallar, özel mesajlar, dosyalar, GIF'ler ve topluluk özellikleri.</span></div>
-      <div class="feature"><strong>Ses ve görüntü</strong><span>RNNoise destekli net ses, kamera ve yüksek kaliteli ekran paylaşımı.</span></div>
-      <div class="feature"><strong>Topluluk yönetimi</strong><span>Roller, izinler, moderasyon, etkinlikler ve gelişmiş sunucu ayarları.</span></div>
-      <div class="feature"><strong>Masaüstü + Web</strong><span>Kurulumla masaüstünde veya indirmeden doğrudan tarayıcıda kullan.</span></div>
+
+    <section class="container" aria-label="Platform özeti">
+      <div class="trust-strip">
+        <div class="trust-item"><strong>Web + masaüstü</strong><span>İndirmeden kullan veya Windows uygulamasını kur.</span></div>
+        <div class="trust-item"><strong>RNNoise destekli ses</strong><span>Arka plan gürültüsünü azaltan daha temiz konuşmalar.</span></div>
+        <div class="trust-item"><strong>Ayrıntılı izinler</strong><span>Roller, kanal yetkileri ve moderasyon kontrolleri.</span></div>
+        <div class="trust-item"><strong>Bağımsız altyapı</strong><span>Başka bir sohbet platformuna bağlı çalışmaz.</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-heading center">
+          <p class="eyebrow">İletişimin her biçimi</p>
+          <h2>Yaz, konuş, görüntünü veya ekranını paylaş.</h2>
+          <p>Günlük sohbetlerden büyük topluluklara kadar ihtiyaç duyduğun temel iletişim araçları aynı sade deneyimde buluşur.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card"><span class="feature-number">01</span><h3>Gerçek zamanlı mesajlaşma</h3><p>Metin kanalları, özel mesajlar, grup konuşmaları, yanıtlar, iş parçacıkları, tepkiler, anketler, GIF'ler ve dosya paylaşımı.</p></article>
+          <article class="feature-card"><span class="feature-number">02</span><h3>Sesli sohbet</h3><p>Ses kanalları, mikrofon ve sağırlaştırma kontrolleri, bas-konuş, kullanıcı ses seviyesi, giriş/çıkış sesleri ve konuşan kişi göstergesi.</p></article>
+          <article class="feature-card"><span class="feature-number">03</span><h3>Görüntü ve yayın</h3><p>Kamera, ekran paylaşımı, yayın önizleme, büyütme ve tam ekran izleme ile ekip arkadaşlarınla aynı ekranda kal.</p></article>
+          <article class="feature-card"><span class="feature-number">04</span><h3>Sunucu ve kanal yönetimi</h3><p>Metin, ses ve sahne kanalları; davetler, keşif seçenekleri, etkinlikler ve topluluğa özel düzenlemeler.</p></article>
+          <article class="feature-card"><span class="feature-number">05</span><h3>Roller ve moderasyon</h3><p>Rol hiyerarşisi, ayrıntılı izinler, atma, yasaklama, zaman aşımı, susturma, sağırlaştırma, taşıma ve denetim kayıtları.</p></article>
+          <article class="feature-card"><span class="feature-number">06</span><h3>Rich Presence</h3><p>Kullanıcı kontrolündeki gizlilik ayarlarıyla oyun, uygulama ve medya etkinliklerini profilinde gerçek zamanlı göster.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section compact">
+      <div class="container split">
+        <div class="panel">
+          <p class="eyebrow">Ses deneyimi</p>
+          <h2>Konuşmalar daha temiz, kontroller daha yakın.</h2>
+          <p class="hero-copy">RNNoise tabanlı gürültü engelleme, yankı azaltma, otomatik kazanç, cihaz seçimi ve bas-konuş seçenekleri sayesinde sesini ortamına göre ayarlayabilirsin.</p>
+          <ul class="check-list">
+            <li>Mikrofon, hoparlör ve kamera aygıtı seçimi</li>
+            <li>Standart veya güçlü ses izolasyonu</li>
+            <li>Kullanıcı bazında ses seviyesi ve moderasyon</li>
+            <li>Ses kanalı üyelerini kanala girmeden görüntüleme</li>
+          </ul>
+        </div>
+        <div>
+          <p class="eyebrow">Topluluk kontrolü</p>
+          <h2>Doğru kişiye, doğru yetki.</h2>
+          <p class="hero-copy">Sunucu sahibi rol sırasını, kanal erişimini ve moderasyon yetkilerini belirler. Yetkili kullanıcılar yalnızca izin verilen işlemleri gerçekleştirebilir.</p>
+          <div class="pill-row" aria-label="Bazı topluluk özellikleri">
+            <span class="pill">Rol hiyerarşisi</span><span class="pill">Kanal izinleri</span><span class="pill">AutoMod</span><span class="pill">Denetim kaydı</span><span class="pill">Etkinlikler</span><span class="pill">Davetler</span><span class="pill">Sesli moderasyon</span><span class="pill">Bildirim ayarları</span>
+          </div>
+          <div class="actions"><a class="button secondary" href="/ozellikler/">Ayrıntılı özellik listesi</a><a class="button ghost" href="/guvenlik/">Güvenlik yaklaşımı →</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="sss">
+      <div class="container">
+        <div class="section-heading center"><p class="eyebrow">Sık sorulan sorular</p><h2>Başlamadan önce bilmen gerekenler.</h2></div>
+        <div class="faq-list">
+          <details><summary>tahosapp nedir?</summary><p>tahosapp; mesajlaşma, sesli ve görüntülü görüşme, ekran paylaşımı, özel mesajlar ve topluluk yönetimi sunan bağımsız bir iletişim platformudur.</p></details>
+          <details><summary>tahosapp ücretsiz mi?</summary><p>Mevcut tahosapp sürümü ücretsiz kullanılabilir. İleride ücretli bir özellik sunulursa kapsamı ve koşulları kullanıcıya ayrıca açıklanır.</p></details>
+          <details><summary>Uygulamayı indirmek zorunlu mu?</summary><p>Hayır. Uygulamayı tarayıcı üzerinden kullanabilir veya Windows masaüstü uygulamasını kurabilirsin. Bazı masaüstü özellikleri yalnızca kurulu uygulamada bulunabilir.</p></details>
+          <details><summary>Discord hesabı veya Discord bağlantısı gerekiyor mu?</summary><p>Hayır. tahosapp bağımsız çalışır; Discord hesabı, Discord API'si veya Discord istemcisi gerektirmez. Discord Inc. ile bağlantılı veya onun tarafından desteklenen bir ürün değildir.</p></details>
+          <details><summary>Ses ve görüntü kaydediliyor mu?</summary><p>Sesli ve görüntülü iletişim WebRTC üzerinden katılımcılar arasında iletilir; bağlantı gerektiğinde TURN sunucusu üzerinden aktarılabilir. Hizmetin normal işleyişinde görüşme içeriği sunucu tarafından kayıt altına alınmaz.</p></details>
+          <details><summary>Hesabım nasıl korunuyor?</summary><p>E-posta doğrulaması, girişte doğrulama kodu, Argon2id parola özeti, oturum güvenliği, hız sınırlama ve şifreli uygulama verisi gibi katmanlar kullanılır. Ayrıntılar güvenlik sayfasındadır.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section class="container cta">
+      <h2>Topluluğunu tahosapp'te buluştur.</h2>
+      <p>Web sürümünü hemen aç veya Windows uygulamasını indirerek masaüstünden devam et.</p>
+      <div class="actions"><a class="button primary" href="/app/">Tarayıcıda başla</a><a class="button secondary" href="/downloads/tahosapp-Setup-latest.exe" download>Windows için indir</a></div>
     </section>
   </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div><a class="brand" href="/"><img src="/assets/tahosapp-icon.png" alt="" />tahosapp</a><p class="footer-about">Mesajlaşma, ses, görüntü, ekran paylaşımı ve topluluk yönetimini bir araya getiren bağımsız iletişim platformu.</p></div>
+      <div class="footer-column"><strong>Ürün</strong><a href="/ozellikler/">Özellikler</a><a href="/guvenlik/">Güvenlik</a><a href="/app/">Web uygulaması</a><a href="/downloads/tahosapp-Setup-latest.exe">Windows indir</a></div>
+      <div class="footer-column"><strong>Kurallar</strong><a href="/kullanim-kosullari/">Kullanım Koşulları</a><a href="/topluluk-kurallari/">Topluluk Kuralları</a><a href="/kabul-edilebilir-kullanim/">Kabul Edilebilir Kullanım</a><a href="/guvenlik/#bildirim">Güvenlik bildirimi</a></div>
+      <div class="footer-column"><strong>Gizlilik</strong><a href="/gizlilik/">Gizlilik ve KVKK</a><a href="/cerezler/">Çerez ve Yerel Depolama</a><a href="/kvkk-basvuru/">KVKK Başvurusu</a><a href="/iletisim/">İletişim</a></div>
+    </div>
+    <div class="container footer-bottom"><span>© 2026 tahosapp. Tüm hakları saklıdır.</span><span>Discord Inc. ile bağlantılı değildir.</span></div>
+  </footer>
 </body>
 </html>
