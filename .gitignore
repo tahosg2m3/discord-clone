@@ -34,3 +34,4 @@ data-encryption-migration.json.*.tmp
 
 backend/datayedek*.json
 .deploy/
+.tmp.driveupload/
