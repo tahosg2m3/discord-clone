@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const path = require('path');
 const { SQLiteStateStore } = require('./sqliteStateStore');
 
@@ -635,12 +636,23 @@ class InMemoryStorage {
     ));
   }
 
+  createUniqueServerInviteCode() {
+    // Varsayılan davet kodu bir erişim anahtarıdır. Math.random hem tahmin
+    // edilebilir hem de kısa kodlarda çakışma riski taşır. 80 bitlik CSPRNG
+    // çıktı ve benzersizlik kontrolü bu iki riski de ortadan kaldırır.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const code = crypto.randomBytes(10).toString('hex').toUpperCase();
+      if (!this.getServerByInviteCode(code)) return code;
+    }
+    throw new Error('Benzersiz sunucu davet kodu oluşturulamadı.');
+  }
+
   createServer(name, creatorId) {
     const server = {
       id: uuidv4(),
       name: String(name || '').trim(),
       creatorId,
-      inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+      inviteCode: this.createUniqueServerInviteCode(),
       createdAt: Date.now(),
       isDM: false,
     };

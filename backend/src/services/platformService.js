@@ -251,6 +251,14 @@ function publicWebhook(webhook) {
   return clone(safe);
 }
 
+function timingSafeHexEquals(first, second) {
+  if (typeof first !== 'string' || typeof second !== 'string') return false;
+  if (!/^[a-f0-9]{64}$/i.test(first) || !/^[a-f0-9]{64}$/i.test(second)) return false;
+  const expected = Buffer.from(first, 'hex');
+  const supplied = Buffer.from(second, 'hex');
+  return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+}
+
 function publicPoll(poll, userId = null, includeVoters = false) {
   if (!poll) return null;
   const result = clone(poll);
@@ -2117,7 +2125,7 @@ class PlatformService {
     const hash = crypto.createHash('sha256').update(String(token || '')).digest('hex');
     for (const [serverId, state] of Object.entries(this.ensureRootState().servers)) {
       const webhook = state.webhooks?.find(item => (
-        item.tokenHash === hash && item.enabled && (!webhookId || item.id === webhookId)
+        timingSafeHexEquals(item.tokenHash, hash) && item.enabled && (!webhookId || item.id === webhookId)
       ));
       if (webhook) return publicWebhook({ ...webhook, serverId });
     }

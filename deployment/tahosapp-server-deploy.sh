@@ -74,6 +74,23 @@ sudo -u tahosapp env \
   PATH=/opt/node22/bin:/usr/bin:/bin \
   /opt/node22/bin/npm ci --omit=dev --no-audit --no-fund --prefix "$backend_release"
 
+# The Node service does not need Linux capabilities or visibility into other
+# users' processes. Keep this as a drop-in so future deployments preserve the
+# hardening even if the base unit is recreated by the hosting provider.
+install -d -m 0755 /etc/systemd/system/tahosapp.service.d
+cat > /etc/systemd/system/tahosapp.service.d/30-hardening.conf <<'EOF'
+[Service]
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RemoveIPC=true
+SystemCallArchitectures=native
+EOF
+chmod 0644 /etc/systemd/system/tahosapp.service.d/30-hardening.conf
+systemctl daemon-reload
+
 ln -sfn "$backend_release" /opt/tahosapp/current
 ln -sfn "$web_release" /var/www/tahosapp-web/current
 if [[ "$update_archive" != "-" ]]; then

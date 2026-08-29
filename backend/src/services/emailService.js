@@ -45,10 +45,23 @@ function createTransporter() {
     throw configurationError('SMTP_PORT 1 ile 65535 arasında geçerli bir sayı olmalıdır.');
   }
 
+  const host = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const secure = getSmtpSecure(port);
+
   return nodemailer.createTransport({
-    host: String(process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
+    host,
     port,
-    secure: getSmtpSecure(port),
+    secure,
+    // Submission ports must upgrade with STARTTLS; do not silently fall back
+    // to clear text if a network attacker strips the server capability.
+    requireTLS: !secure,
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 30_000,
+    tls: {
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: true,
+    },
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,

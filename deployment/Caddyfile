@@ -2,37 +2,61 @@
 	admin 127.0.0.1:2019
 }
 
+(cloudflare_only) {
+	# Defense in depth in addition to the host firewall. Localhost remains
+	# available for origin health checks; public web traffic must come from CF.
+	@directOrigin {
+		not remote_ip 127.0.0.0/8 ::1 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	}
+	respond @directOrigin "Forbidden" 403
+}
+
 (common_security) {
 	encode zstd gzip
 	header {
-		Strict-Transport-Security "max-age=31536000"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		X-Frame-Options "DENY"
+		X-Permitted-Cross-Domain-Policies "none"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-site"
 		-Server
 	}
 }
 
 api.tahosapp.com.tr {
+	import cloudflare_only
 	import common_security
 	header X-Robots-Tag "noindex, nofollow, noarchive"
 	request_body {
 		max_size 12MB
 	}
-	reverse_proxy 127.0.0.1:3001
+	reverse_proxy 127.0.0.1:3001 {
+		# Cloudflare overwrites this header with the actual visitor address. The
+		# firewall guarantees that a direct client cannot forge the CF header.
+		header_up X-Forwarded-For {http.request.header.Cf-Connecting-Ip}
+		header_up X-Real-IP {http.request.header.Cf-Connecting-Ip}
+	}
 }
 
 voice.tahosapp.com.tr {
+	import cloudflare_only
 	import common_security
 	header X-Robots-Tag "noindex, nofollow, noarchive"
-	reverse_proxy 127.0.0.1:9000
+	reverse_proxy 127.0.0.1:9000 {
+		header_up X-Forwarded-For {http.request.header.Cf-Connecting-Ip}
+		header_up X-Real-IP {http.request.header.Cf-Connecting-Ip}
+	}
 }
 
 www.tahosapp.com.tr {
+	import cloudflare_only
 	redir https://tahosapp.com.tr{uri} permanent
 }
 
 tahosapp.com.tr {
+	import cloudflare_only
 	import common_security
 	header {
 		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' https://api.tahosapp.com.tr wss://api.tahosapp.com.tr https://voice.tahosapp.com.tr wss://voice.tahosapp.com.tr; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"

@@ -34,6 +34,9 @@ const MAX_RATE_LIMIT_ENTRIES = 10_000;
 // Uygulama yeniden başladığında bekleyen oturumlar zaten bellekten silinir.
 const CODE_HASH_KEY = crypto.randomBytes(32);
 const RATE_LIMIT_HASH_KEY = crypto.randomBytes(32);
+// Public, non-secret Argon2id sentinel. Unknown-account logins verify against
+// this hash so response timing does not reveal whether an e-mail exists.
+const DUMMY_PASSWORD_HASH = '$argon2id$v=19$m=65536,p=1,t=3$Q9clpdqQzK5znLvxYe1zzg$+y38aOiYvmC5pbq8Ze7riuzMneX0c0kSd0eY32o6Qk8';
 
 function cleanupExpiredSecurityState(now = Date.now()) {
   [pendingTwoFactorLogins, pendingPasswordResets, pendingEmailChanges].forEach(map => {
@@ -527,7 +530,18 @@ router.post('/login', rateLimits.loginIp, rateLimits.loginAccount, async (req, r
     const password = String(req.body.password || '');
     const user = findUserByEmail(email);
 
-    if (!user || !(await checkPasswordAndMigrate(user, password))) {
+    // Bound the Argon2 input and perform the same expensive verification for
+    // unknown accounts. This closes both oversized-input abuse and the common
+    // account-existence timing side channel.
+    const passwordCandidate = isValidPassword(password) ? password : '<invalid-password>';
+    let passwordAccepted = false;
+    if (user) {
+      passwordAccepted = await checkPasswordAndMigrate(user, passwordCandidate);
+    } else {
+      await verifyPassword(passwordCandidate, DUMMY_PASSWORD_HASH);
+    }
+
+    if (!user || !passwordAccepted) {
       return res.status(401).json({ error: 'E-posta veya şifre hatalı.' });
     }
 

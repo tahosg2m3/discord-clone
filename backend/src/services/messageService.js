@@ -56,6 +56,7 @@ function createSafeLinkMetadata(value) {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (url.username || url.password) return null;
     return {
       title: url.hostname.replace(/^www\./i, '') || url.href,
       url: url.href,
